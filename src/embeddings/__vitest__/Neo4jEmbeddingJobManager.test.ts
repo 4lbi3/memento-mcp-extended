@@ -44,6 +44,7 @@ describe('Neo4jEmbeddingJobManager', () => {
       }),
       retryFailedJobs: vi.fn(),
       cleanupJobs: vi.fn(),
+      scheduledCleanupJobs: vi.fn(),
       heartbeatJobs: vi.fn(),
       close: vi.fn(),
     } as any;
@@ -233,12 +234,12 @@ describe('Neo4jEmbeddingJobManager', () => {
 
   describe('cleanupJobs', () => {
     it('should clean up old jobs', async () => {
-      mockJobStore.cleanupJobs.mockResolvedValue(7);
+      mockJobStore.scheduledCleanupJobs.mockResolvedValue(7);
 
       const result = await jobManager.cleanupJobs();
 
       expect(result).toBe(7);
-      expect(mockJobStore.cleanupJobs).toHaveBeenCalled();
+      expect(mockJobStore.scheduledCleanupJobs).toHaveBeenCalledWith(14);
     });
   });
 

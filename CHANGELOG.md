@@ -5,6 +5,21 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.3] - 2025-11-11
+
+### Added
+- Automatic provisioning for the dedicated `embedding-jobs` Neo4j database, including creation of the queue constraints/indexes when the configured user has admin rights.
+- Startup validation now blocks until the job database exists and is online, preventing workers from running without the required datastore.
+- Unit coverage for the new job database initializer to ensure the creation/wait logic keeps working.
+
+### Changed
+- `DEFAULT_NEO4J_CONFIG` now honors `NEO4J_URI` for the primary and job databases, so custom Bolt ports are respected everywhere (CLI, workers, and bootstrapper).
+- README/environment samples (including the Claude Desktop MCP snippet) explicitly require `EMBED_JOB_RETENTION_DAYS`, matching the fail-fast runtime validation.
+- OpenSpec change `update-embedding-log-storage` has been archived and merged into the canonical `embedding-jobs` spec.
+
+### Fixed
+- Workers no longer fail on first boot when the job database is missing; the bootstrapper creates it via the `system` database and waits until it reaches `ONLINE`.
+
 ## [0.3.9.2] - 2025-11-11
 
 ### Added

@@ -361,14 +361,17 @@ export class Neo4jEmbeddingJobManager {
   }
 
   /**
-   * Clean up old completed jobs
+   * Clean up old completed and failed jobs based on retention policy
    *
-   * @param threshold - Age in milliseconds after which to delete completed jobs, defaults to 7 days
+   * @param retentionDays - Number of days to retain jobs (7-30 days), defaults to 14
    * @returns Number of jobs cleaned up
    */
-  async cleanupJobs(threshold?: number): Promise<number> {
-    const deletedCount = await this.jobStore.cleanupJobs(threshold);
-    this.logger.info('Cleaned up old completed jobs', { count: deletedCount });
+  async cleanupJobs(retentionDays = 14): Promise<number> {
+    const deletedCount = await this.jobStore.scheduledCleanupJobs(retentionDays);
+    this.logger.info('Cleaned up old completed/failed jobs', {
+      count: deletedCount,
+      retentionDays
+    });
     return deletedCount;
   }
 

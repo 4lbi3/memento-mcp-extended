@@ -487,27 +487,34 @@ export class EmbeddingJobManager {
   }
 
   /**
-   * Clean up old completed jobs
+   * Clean up old completed and failed jobs based on retention policy
    *
-   * @param threshold - Age in milliseconds after which to delete completed jobs, defaults to 7 days
+   * @param retentionDays - Number of days to retain jobs (7-30 days), defaults to 14
    * @returns Number of jobs cleaned up
    */
-  async cleanupJobs(threshold?: number): Promise<number> {
-    const cleanupThreshold = threshold || 7 * 24 * 60 * 60 * 1000; // Default: 7 days
+  async cleanupJobs(retentionDays = 14): Promise<number> {
+    // For backward compatibility, if a very large number is passed, assume it's milliseconds
+    // Convert to days (any value > 100 is likely milliseconds)
+    const actualRetentionDays = retentionDays > 100
+      ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
+      : retentionDays;
+
+    const cleanupThreshold = actualRetentionDays * 24 * 60 * 60 * 1000; // Convert days to milliseconds
     const cutoffTime = Date.now() - cleanupThreshold;
 
     const stmt = this.storageProvider.db.prepare(`
       DELETE FROM embedding_jobs
-      WHERE status = 'completed'
+      WHERE (status = 'completed' OR status = 'failed')
       AND processed_at < ?
+      AND processed_at IS NOT NULL
     `);
 
     const result = stmt.run(cutoffTime);
     const deletedCount = result.changes || 0;
 
-    this.logger.info('Cleaned up old completed jobs', {
+    this.logger.info('Cleaned up old completed/failed jobs', {
       count: deletedCount,
-      threshold: cleanupThreshold,
+      retentionDays: actualRetentionDays,
       olderThan: new Date(cutoffTime).toISOString(),
     });
 

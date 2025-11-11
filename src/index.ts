@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { KnowledgeGraphManager } from './KnowledgeGraphManager.js';
 import { initializeStorageProvider } from './config/storage.js';
@@ -7,6 +8,9 @@ import { EmbeddingJobManager } from './embeddings/EmbeddingJobManager.js';
 import { EmbeddingServiceFactory } from './embeddings/EmbeddingServiceFactory.js';
 import { Neo4jJobStore } from './storage/neo4j/Neo4jJobStore.js';
 import { Neo4jEmbeddingJobManager } from './embeddings/Neo4jEmbeddingJobManager.js';
+import { createJobDatabaseConnectionManager } from './storage/neo4j/Neo4jConnectionManager.js';
+import { DEFAULT_NEO4J_CONFIG, validateNeo4jConfig } from './storage/neo4j/Neo4jConfig.js';
+import { ensureJobDatabasePrepared } from './storage/neo4j/JobDatabaseInitializer.js';
 import { logger } from './utils/logger.js';
 
 // Re-export the types and classes for use in other modules
@@ -16,6 +20,32 @@ export { RelationMetadata, Relation } from './types/relation.js';
 
 // Initialize storage and create KnowledgeGraphManager
 const storageProvider = initializeStorageProvider();
+
+// Validate Neo4j configuration at startup
+const neo4jConfig = DEFAULT_NEO4J_CONFIG;
+try {
+  validateNeo4jConfig(neo4jConfig);
+  logger.info('Neo4j configuration validated successfully', {
+    mainDatabase: neo4jConfig.database,
+    jobDatabase: neo4jConfig.jobDatabaseName,
+    embedJobRetentionDays: neo4jConfig.embedJobRetentionDays,
+  });
+} catch (error) {
+  logger.error('Invalid Neo4j configuration', { error: error instanceof Error ? error.message : String(error) });
+  process.exit(1);
+}
+
+try {
+  await ensureJobDatabasePrepared(neo4jConfig);
+  logger.info('Embedding job database is ready', {
+    jobDatabase: neo4jConfig.jobDatabaseName || 'embedding-jobs',
+  });
+} catch (error) {
+  logger.error('Failed to prepare embedding job database', {
+    error: error instanceof Error ? error.message : String(error),
+  });
+  process.exit(1);
+}
 
 // Initialize embedding job manager only if storage provider supports it
 let embeddingJobManager: EmbeddingJobManager | undefined = undefined;
@@ -55,16 +85,19 @@ try {
   });
 
   // For Neo4j (which is always the storage provider)
-  // Access the connection manager from the Neo4j storage provider
+  // Access the connection manager from the Neo4j storage provider for entity data
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const connectionManager = (storageProvider as any).connectionManager;
+  const entityConnectionManager = (storageProvider as any).connectionManager;
 
-  if (!connectionManager) {
+  if (!entityConnectionManager) {
     throw new Error('Neo4j storage provider does not have a connection manager');
   }
 
-  // Create the Neo4j job store
-  const jobStore = new Neo4jJobStore(connectionManager, true);
+  // Create a dedicated connection manager for the job database
+  const jobConnectionManager = createJobDatabaseConnectionManager(neo4jConfig);
+
+  // Create the Neo4j job store using the dedicated job database
+  const jobStore = new Neo4jJobStore(jobConnectionManager, true);
 
   // Create a compatible wrapper for the Neo4j storage provider
   const adaptedStorageProvider = {
@@ -135,6 +168,28 @@ try {
       });
     }
   }, EMBEDDING_PROCESS_INTERVAL);
+
+  // Schedule periodic cleanup for completed/failed jobs
+  const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // Daily cleanup
+  setInterval(async () => {
+    try {
+      // Clean up old jobs based on retention policy
+      const retentionDays = neo4jConfig.embedJobRetentionDays || 14;
+      const deletedCount = await embeddingJobManager?.cleanupJobs(retentionDays);
+      if (deletedCount && deletedCount > 0) {
+        logger.info('Scheduled job cleanup completed', {
+          deletedCount,
+          retentionDays,
+        });
+      }
+    } catch (error) {
+      // Log error but don't crash
+      logger.error('Error in scheduled job cleanup', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+  }, CLEANUP_INTERVAL);
 } catch (error) {
   // Fail gracefully if embedding job manager initialization fails
   logger.error('Failed to initialize EmbeddingJobManager', {

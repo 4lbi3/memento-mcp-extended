@@ -388,20 +388,32 @@ export class Neo4jJobStore {
   }
 
   /**
-   * Clean up old completed jobs
+   * Clean up old completed and failed jobs based on retention policy
    *
-   * @param threshold Age in milliseconds after which to delete completed jobs, defaults to 7 days
+   * @param retentionDays Number of days to retain completed/failed jobs (7-30 days), or milliseconds for backward compatibility
    * @returns Number of jobs cleaned up
    */
-  async cleanupJobs(threshold = 7 * 24 * 60 * 60 * 1000): Promise<number> {
-    const cutoffTime = Date.now() - threshold;
+  async cleanupJobs(retentionDays = 14): Promise<number> {
+    // For backward compatibility, if a very large number is passed, assume it's milliseconds
+    // Convert to days (any value > 100 is likely milliseconds)
+    const actualRetentionDays = retentionDays > 100
+      ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
+      : retentionDays;
 
-    this.log(`Cleaning up completed jobs older than ${new Date(cutoffTime).toISOString()}`);
+    // Validate retention days
+    if (actualRetentionDays < 7 || actualRetentionDays > 30) {
+      throw new Error(`Retention days must be between 7 and 30, got ${actualRetentionDays}`);
+    }
+
+    const cutoffTime = Date.now() - (actualRetentionDays * 24 * 60 * 60 * 1000);
+
+    this.log(`Cleaning up completed/failed jobs older than ${new Date(cutoffTime).toISOString()} (${actualRetentionDays} days retention)`);
 
     const query = `
       MATCH (job:EmbedJob)
-      WHERE job.status = 'completed'
+      WHERE (job.status = 'completed' OR job.status = 'failed')
       AND job.processed_at < $cutoffTime
+      AND job.processed_at IS NOT NULL
       DELETE job
       RETURN count(job) as deleted
     `;
@@ -409,8 +421,58 @@ export class Neo4jJobStore {
     const result = await this.connectionManager.executeQuery(query, { cutoffTime });
     const deleted = result.records[0]?.get('deleted') as number || 0;
 
-    this.log(`Cleaned up ${deleted} old completed jobs`);
+    this.log(`Cleaned up ${deleted} old completed/failed jobs`);
     return deleted;
+  }
+
+  /**
+   * Scheduled cleanup using APOC TTL for completed and failed jobs
+   *
+   * @param retentionDays Number of days to retain jobs (7-30 days)
+   * @returns Number of jobs cleaned up
+   */
+  async scheduledCleanupJobs(retentionDays = 14): Promise<number> {
+    // For backward compatibility, if a very large number is passed, assume it's milliseconds
+    // Convert to days (any value > 100 is likely milliseconds)
+    const actualRetentionDays = retentionDays > 100
+      ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
+      : retentionDays;
+
+    // Validate retention days
+    if (actualRetentionDays < 7 || actualRetentionDays > 30) {
+      throw new Error(`Retention days must be between 7 and 30, got ${actualRetentionDays}`);
+    }
+
+    const cutoffTime = Date.now() - (actualRetentionDays * 24 * 60 * 60 * 1000);
+
+    this.log(`Running scheduled cleanup for jobs older than ${new Date(cutoffTime).toISOString()}`);
+
+    // Use APOC periodic iterate for efficient bulk deletion
+    const query = `
+      CALL apoc.periodic.iterate(
+        "MATCH (job:EmbedJob)
+         WHERE (job.status = 'completed' OR job.status = 'failed')
+         AND job.processed_at < $cutoffTime
+         AND job.processed_at IS NOT NULL
+         RETURN job",
+        "DELETE job",
+        {batchSize: 1000, parallel: false, iterateList: true}
+      )
+      YIELD batches, total
+      RETURN total as deleted
+    `;
+
+    try {
+      const result = await this.connectionManager.executeQuery(query, { cutoffTime });
+      const deleted = result.records[0]?.get('deleted') as number || 0;
+
+      this.log(`Scheduled cleanup completed: ${deleted} jobs removed`);
+      return deleted;
+    } catch (error) {
+      // Fallback to regular cleanup if APOC is not available
+      this.log('APOC not available, falling back to regular cleanup');
+      return await this.cleanupJobs(retentionDays);
+    }
   }
 
   /**

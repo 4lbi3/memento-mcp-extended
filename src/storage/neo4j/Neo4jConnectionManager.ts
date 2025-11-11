@@ -2,6 +2,23 @@ import neo4j, { type Driver, type Session, type QueryResult } from 'neo4j-driver
 import { DEFAULT_NEO4J_CONFIG, type Neo4jConfig } from './Neo4jConfig.js';
 
 /**
+ * Creates a Neo4j connection manager for the dedicated embedding job database
+ * @param config Neo4j configuration
+ * @returns Neo4jConnectionManager configured for the job database
+ */
+export function createJobDatabaseConnectionManager(config: Neo4jConfig): Neo4jConnectionManager {
+  const jobConfig: Neo4jConfig = {
+    ...config,
+    uri: config.jobDatabaseUri || config.uri,
+    username: config.jobDatabaseUsername || config.username,
+    password: config.jobDatabasePassword || config.password,
+    database: config.jobDatabaseName || 'embedding-jobs',
+  };
+
+  return new Neo4jConnectionManager(jobConfig);
+}
+
+/**
  * Options for configuring a Neo4j connection
  * @deprecated Use Neo4jConfig instead
  */
