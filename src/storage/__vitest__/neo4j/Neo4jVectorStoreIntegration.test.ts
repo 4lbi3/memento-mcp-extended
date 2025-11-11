@@ -8,9 +8,8 @@ import { Neo4jConfig } from '../../neo4j/Neo4jConfig.js';
 import neo4j from 'neo4j-driver';
 
 // This test requires a running Neo4j database
-// Skip if not in integration test environment
-const isIntegrationTest = process.env.TEST_INTEGRATION === 'true';
-const describeOrSkip = isIntegrationTest ? describe : describe.skip;
+// Always run since we have Neo4j available in our test environment
+const describeOrSkip = describe;
 
 // Helper function to wait for a specific amount of time
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,10 +35,13 @@ describeOrSkip('Neo4j Vector Index Test', () => {
 
   beforeAll(async () => {
     // Create Neo4j config
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     const neo4jConfig: Neo4jConfig = {
-      uri: 'bolt://localhost:7687',
-      username: 'neo4j',
-      password: 'memento_password',
+      uri: `bolt://localhost:${expectedPort}`,
+      username: expectedUsername,
+      password: expectedPassword,
       database: 'neo4j',
       vectorIndexName: fallbackIndexName,
       vectorDimensions: VECTOR_DIMENSIONS, // Update to match existing index dimensions

@@ -35,10 +35,13 @@ vi.mock('neo4j-driver', () => {
 
 describe('Neo4jConnectionManager', () => {
   let connectionManager: Neo4jConnectionManager;
+  const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+  const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+  const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
   const defaultOptions: Neo4jConnectionOptions = {
-    uri: 'bolt://localhost:7687',
-    username: 'neo4j',
-    password: 'memento_password',
+    uri: `bolt://localhost:${expectedPort}`,
+    username: expectedUsername,
+    password: expectedPassword,
     database: 'neo4j',
   };
 
@@ -55,7 +58,7 @@ describe('Neo4jConnectionManager', () => {
   it('should create a connection with default options', () => {
     connectionManager = new Neo4jConnectionManager();
 
-    expect(neo4j.driver).toHaveBeenCalledWith('bolt://localhost:7687', 'mock-auth', {});
+    expect(neo4j.driver).toHaveBeenCalledWith(`bolt://localhost:${expectedPort}`, 'mock-auth', {});
   });
 
   it('should create a connection with custom options', () => {

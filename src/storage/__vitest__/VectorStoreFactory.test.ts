@@ -34,10 +34,13 @@ describe('VectorStoreFactory', () => {
 
   it('should create a Neo4jVectorStore instance by default', async () => {
     // We need to provide neo4jConfig because it's required
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     const defaultNeo4jConfig = {
-      uri: 'bolt://localhost:7687',
-      username: 'neo4j',
-      password: 'password',
+      uri: `bolt://localhost:${expectedPort}`,
+      username: expectedUsername,
+      password: expectedPassword,
       database: 'neo4j',
       vectorIndexName: 'entity_embeddings',
       vectorDimensions: 1536,
@@ -61,10 +64,13 @@ describe('VectorStoreFactory', () => {
   });
 
   it('should create a Neo4jVectorStore instance with custom options', async () => {
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     const neo4jConfig = {
-      uri: 'bolt://localhost:7687',
-      username: 'neo4j',
-      password: 'password',
+      uri: `bolt://localhost:${expectedPort}`,
+      username: expectedUsername,
+      password: expectedPassword,
       database: 'test_db',
       vectorIndexName: 'test_index',
       vectorDimensions: 1536,
@@ -108,12 +114,15 @@ describe('VectorStoreFactory', () => {
   });
 
   it('should initialize the Neo4j vector store when initializeImmediately is true', async () => {
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     await VectorStoreFactory.createVectorStore({
       type: 'neo4j',
       neo4jConfig: {
-        uri: 'bolt://localhost:7687',
-        username: 'neo4j',
-        password: 'password',
+        uri: `bolt://localhost:${expectedPort}`,
+        username: expectedUsername,
+        password: expectedPassword,
         database: 'neo4j',
         vectorIndexName: 'entity_embeddings',
         vectorDimensions: 1536,
@@ -127,12 +136,15 @@ describe('VectorStoreFactory', () => {
   });
 
   it('should not initialize the Neo4j vector store when initializeImmediately is false', async () => {
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     await VectorStoreFactory.createVectorStore({
       type: 'neo4j',
       neo4jConfig: {
-        uri: 'bolt://localhost:7687',
-        username: 'neo4j',
-        password: 'password',
+        uri: `bolt://localhost:${expectedPort}`,
+        username: expectedUsername,
+        password: expectedPassword,
         database: 'neo4j',
         vectorIndexName: 'entity_embeddings',
         vectorDimensions: 1536,

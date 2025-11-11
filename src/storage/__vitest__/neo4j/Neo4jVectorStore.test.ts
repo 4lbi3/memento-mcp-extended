@@ -101,10 +101,13 @@ describe('Neo4jVectorStore', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     mockConnectionManager = new Neo4jConnectionManager({
-      uri: 'bolt://localhost:7687',
-      username: 'neo4j',
-      password: 'password',
+      uri: `bolt://localhost:${expectedPort}`,
+      username: expectedUsername,
+      password: expectedPassword,
     });
 
     vectorStore = new Neo4jVectorStore({

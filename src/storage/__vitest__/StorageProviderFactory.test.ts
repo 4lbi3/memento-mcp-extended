@@ -68,12 +68,15 @@ describe('StorageProviderFactory', () => {
     it('should create a Neo4jStorageProvider when type is "neo4j"', () => {
       // Arrange
       const factory = new StorageProviderFactory();
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       const config: StorageProviderConfig = {
         type: 'neo4j',
         options: {
-          neo4jUri: 'bolt://localhost:7687',
-          neo4jUsername: 'neo4j',
-          neo4jPassword: 'password',
+          neo4jUri: `bolt://localhost:${expectedPort}`,
+          neo4jUsername: expectedUsername,
+          neo4jPassword: expectedPassword,
         },
       };
 
@@ -210,12 +213,15 @@ describe('StorageProviderFactory', () => {
           memoryFilePath: testJsonPath,
         },
       };
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       const neo4jConfig: StorageProviderConfig = {
         type: 'neo4j',
         options: {
-          neo4jUri: 'bolt://localhost:7687',
-          neo4jUsername: 'neo4j',
-          neo4jPassword: 'password',
+          neo4jUri: `bolt://localhost:${expectedPort}`,
+          neo4jUsername: expectedUsername,
+          neo4jPassword: expectedPassword,
         },
       };
       const fileProvider = factory.createProvider(fileConfig);

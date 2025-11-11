@@ -40,11 +40,15 @@ export interface Neo4jConfig {
 
 /**
  * Default Neo4j configuration
+ * Reads configuration from environment variables:
+ * - NEO4J_BOLT_HOST_PORT (defaults to 7687)
+ * - NEO4J_USERNAME (defaults to 'neo4j')
+ * - NEO4J_PASSWORD (defaults to 'memento_password')
  */
 export const DEFAULT_NEO4J_CONFIG: Neo4jConfig = {
-  uri: 'bolt://localhost:7687',
-  username: 'neo4j',
-  password: 'memento_password',
+  uri: `bolt://localhost:${process.env.NEO4J_BOLT_HOST_PORT || '7687'}`,
+  username: process.env.NEO4J_USERNAME || 'neo4j',
+  password: process.env.NEO4J_PASSWORD || 'memento_password',
   database: 'neo4j',
   vectorIndexName: 'entity_embeddings',
   vectorDimensions: 1536,

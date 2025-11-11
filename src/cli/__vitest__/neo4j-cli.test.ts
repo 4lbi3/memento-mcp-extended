@@ -26,9 +26,13 @@ describe('Neo4j CLI Utility', () => {
       const argv: string[] = [];
       const { config } = parseArgs(argv);
 
-      expect(config.uri).toBe('bolt://localhost:7687');
-      expect(config.username).toBe('neo4j');
-      expect(config.password).toBe('memento_password');
+      // Verify it uses the port from environment variable or defaults to 7687
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
+      expect(config.uri).toBe(`bolt://localhost:${expectedPort}`);
+      expect(config.username).toBe(expectedUsername);
+      expect(config.password).toBe(expectedPassword);
     });
 
     it('should parse command line arguments correctly', () => {
@@ -54,10 +58,13 @@ describe('Neo4j CLI Utility', () => {
 
   describe('testConnection', () => {
     it('should test connection successfully', async () => {
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       const config: Neo4jConfig = {
-        uri: 'bolt://localhost:7687',
-        username: 'neo4j',
-        password: 'memento_password',
+        uri: `bolt://localhost:${expectedPort}`,
+        username: expectedUsername,
+        password: expectedPassword,
         database: 'neo4j',
         vectorIndexName: 'entity_embeddings',
         vectorDimensions: 1536,
@@ -99,10 +106,13 @@ describe('Neo4j CLI Utility', () => {
 
   describe('initializeSchema', () => {
     it('should initialize schema successfully', async () => {
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       const config: Neo4jConfig = {
-        uri: 'bolt://localhost:7687',
-        username: 'neo4j',
-        password: 'memento_password',
+        uri: `bolt://localhost:${expectedPort}`,
+        username: expectedUsername,
+        password: expectedPassword,
         database: 'neo4j',
         vectorIndexName: 'entity_embeddings',
         vectorDimensions: 1536,

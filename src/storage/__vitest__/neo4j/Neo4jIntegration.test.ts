@@ -19,10 +19,13 @@ describe('Neo4j Integration Test', () => {
   let schemaManager: Neo4jSchemaManager;
 
   beforeAll(() => {
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     connectionManager = new Neo4jConnectionManager({
-      uri: 'bolt://localhost:7687',
-      username: 'neo4j',
-      password: 'memento_password',
+      uri: `bolt://localhost:${expectedPort}`,
+      username: expectedUsername,
+      password: expectedPassword,
       database: 'neo4j',
     });
     schemaManager = new Neo4jSchemaManager(connectionManager);

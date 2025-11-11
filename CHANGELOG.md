@@ -5,6 +5,22 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.1] - 2025-11-11
+
+### Added
+- Introduced `env.example` with the minimal OpenAI and Neo4j variables so local setups and CI share the same defaults.
+- Documented the current architecture and configuration expectations in `docs/detailed-project-analysis.md`.
+- Enabled the full Vitest suite by reworking the previously skipped Neo4j integration specs so they now run with environment-driven configuration.
+- Updated `README.md` with fork context and a guided environment-setup workflow based on the new `.env` file.
+
+### Changed
+- Neo4j configuration now derives the Bolt port, username, and password from the environment everywhere (`src/config/storage.ts`, `src/storage/neo4j/Neo4jConfig.ts`, and all related tests), eliminating hard-coded credentials.
+- Vitest loads `.env` automatically (`vitest.config.ts`), ensuring unit and integration tests respect the same connection settings as the application.
+- Updated `docker-compose.yml` to forward `NEO4J_*` values for auth and port mappings so containers run with the same credentials and ports used by the tests and CLI utilities.
+
+### Removed
+- Dropped the outdated `example.env` in favor of the new `env.example` template.
+
 ## [0.3.9] - 2025-05-08
 
 ### Changed

@@ -47,6 +47,15 @@ describe('storage configuration module', () => {
     vi.resetAllMocks();
     vi.resetModules();
 
+    // Clear Neo4j environment variables to test default behavior
+    delete process.env.NEO4J_USERNAME;
+    delete process.env.NEO4J_PASSWORD;
+    delete process.env.NEO4J_URI;
+    delete process.env.NEO4J_DATABASE;
+    delete process.env.NEO4J_VECTOR_INDEX;
+    delete process.env.NEO4J_VECTOR_DIMENSIONS;
+    delete process.env.NEO4J_SIMILARITY_FUNCTION;
+
     // Set up default mock implementations
     vi.mocked(StorageProviderFactory.prototype.createProvider).mockReturnValue({
       mockedProvider: true,
@@ -83,12 +92,15 @@ describe('storage configuration module', () => {
       const result = storageModule.createStorageConfig('neo4j');
 
       // Assert
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       expect(result).toEqual({
         type: 'neo4j',
         options: {
-          neo4jUri: 'bolt://localhost:7687',
-          neo4jUsername: 'neo4j',
-          neo4jPassword: 'memento_password',
+          neo4jUri: `bolt://localhost:${expectedPort}`,
+          neo4jUsername: expectedUsername,
+          neo4jPassword: expectedPassword,
           neo4jDatabase: 'neo4j',
           neo4jVectorIndexName: 'entity_embeddings',
           neo4jVectorDimensions: 1536,
@@ -130,12 +142,15 @@ describe('storage configuration module', () => {
       const result = storageModule.createStorageConfig(undefined);
 
       // Assert
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       expect(result).toEqual({
         type: 'neo4j',
         options: {
-          neo4jUri: 'bolt://localhost:7687',
-          neo4jUsername: 'neo4j',
-          neo4jPassword: 'memento_password',
+          neo4jUri: `bolt://localhost:${expectedPort}`,
+          neo4jUsername: expectedUsername,
+          neo4jPassword: expectedPassword,
           neo4jDatabase: 'neo4j',
           neo4jVectorIndexName: 'entity_embeddings',
           neo4jVectorDimensions: 1536,
@@ -143,6 +158,7 @@ describe('storage configuration module', () => {
         },
       });
     });
+
   });
 
   describe('initializeStorageProvider', () => {
@@ -167,17 +183,28 @@ describe('storage configuration module', () => {
     });
 
     it('should create a Neo4j storage provider with default values', async () => {
+      // Ensure environment variables are cleared for default values test
+      delete process.env.NEO4J_USERNAME;
+      delete process.env.NEO4J_PASSWORD;
+      delete process.env.NEO4J_DATABASE;
+      delete process.env.NEO4J_VECTOR_INDEX;
+      delete process.env.NEO4J_VECTOR_DIMENSIONS;
+      delete process.env.NEO4J_SIMILARITY_FUNCTION;
+
       // Act
       const result = storageModule.initializeStorageProvider();
 
       // Assert
+      const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+      const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+      const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
       expect(vi.mocked(StorageProviderFactory.prototype.createProvider)).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'neo4j',
           options: expect.objectContaining({
-            neo4jUri: 'bolt://localhost:7687',
-            neo4jUsername: 'neo4j',
-            neo4jPassword: 'memento_password',
+            neo4jUri: `bolt://localhost:${expectedPort}`,
+            neo4jUsername: expectedUsername,
+            neo4jPassword: expectedPassword,
             neo4jDatabase: 'neo4j',
             neo4jVectorIndexName: 'entity_embeddings',
             neo4jVectorDimensions: 1536,

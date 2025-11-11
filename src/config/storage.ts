@@ -39,8 +39,12 @@ export function createStorageConfig(storageType: string | undefined): StorageCon
   // Neo4j is always the type
   const type = determineStorageType(storageType);
 
+  // Construct URI from NEO4J_URI if provided, otherwise build from host and port
+  const neo4jPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+  const neo4jUri = process.env.NEO4J_URI || `bolt://localhost:${neo4jPort}`;
+
   logger.info('Configuring Neo4j storage provider', {
-    uri: process.env.NEO4J_URI || 'bolt://localhost:7687',
+    uri: neo4jUri,
     database: process.env.NEO4J_DATABASE || 'neo4j',
     vectorIndex: process.env.NEO4J_VECTOR_INDEX || 'entity_embeddings',
   });
@@ -50,7 +54,7 @@ export function createStorageConfig(storageType: string | undefined): StorageCon
     type,
     options: {
       // Neo4j connection options from environment variables
-      neo4jUri: process.env.NEO4J_URI || 'bolt://localhost:7687',
+      neo4jUri,
       neo4jUsername: process.env.NEO4J_USERNAME || 'neo4j',
       neo4jPassword: process.env.NEO4J_PASSWORD || 'memento_password',
       neo4jDatabase: process.env.NEO4J_DATABASE || 'neo4j',

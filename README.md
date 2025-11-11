@@ -4,6 +4,8 @@
 
 Scalable, high performance knowledge graph memory system with semantic retrieval, contextual recall, and temporal awareness. Provides any LLM client that supports the model context protocol (e.g., Claude Desktop, Cursor, Github Copilot) with resilient, adaptive, and persistent long-term ontological memory.
 
+> **Fork note**: this repository is a fork committed to continuing the development and improvement of Memento MCP, staying compatible with upstream while introducing additional enhancements and fixes.
+
 [![Memento MCP Tests](https://github.com/gannonh/memento-mcp/actions/workflows/memento-mcp.yml/badge.svg)](https://github.com/gannonh/memento-mcp/actions/workflows/memento-mcp.yml)
 [![smithery badge](https://smithery.ai/badge/@gannonh/memento-mcp)](https://smithery.ai/server/@gannonh/memento-mcp)
 
@@ -401,12 +403,35 @@ The following tools are available to LLM client hosts through the Model Context 
 
 ## Configuration
 
+### Environment Setup
+
+1. Copy the provided template and create your local configuration:
+
+   ```bash
+   cp env.example .env
+   ```
+
+2. Edit `.env` and customize it before starting Neo4j for the first time:
+   - Set `OPENAI_API_KEY` so embeddings can be generated.
+   - Adjust `NEO4J_HTTP_HOST_PORT` and `NEO4J_BOLT_HOST_PORT` if the defaults collide with other services on your machine.
+   - Change `NEO4J_USERNAME` and `NEO4J_PASSWORD` if you do not want to use the defaults. **Make these changes before the first `docker compose up`, otherwise you'll need to log into Neo4j (e.g., via `cypher-shell` or `neo4j-admin`) to rotate the credentials manually.**
+
+3. Start Neo4j with the values you just configured:
+
+   ```bash
+   docker compose up -d neo4j
+   ```
+
+   The container reads the same `.env` file that the application and tests use, keeping credentials and port mappings consistent everywhere.
+
 ### Environment Variables
 
 Configure Memento MCP with these environment variables:
 
 ```bash
 # Neo4j Connection Settings
+NEO4J_HTTP_HOST_PORT=7474
+NEO4J_BOLT_HOST_PORT=7687
 NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=memento_password

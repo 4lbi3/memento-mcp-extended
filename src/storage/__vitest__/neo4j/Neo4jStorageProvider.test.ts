@@ -299,10 +299,13 @@ describe('Neo4jStorageProvider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    const expectedPort = process.env.NEO4J_BOLT_HOST_PORT || '7687';
+    const expectedUsername = process.env.NEO4J_USERNAME || 'neo4j';
+    const expectedPassword = process.env.NEO4J_PASSWORD || 'memento_password';
     mockConfig = {
-      uri: 'bolt://localhost:7687',
-      username: 'neo4j',
-      password: 'memento_password',
+      uri: `bolt://localhost:${expectedPort}`,
+      username: expectedUsername,
+      password: expectedPassword,
       database: 'neo4j',
       vectorIndexName: 'entity_embeddings',
       vectorDimensions: 1536,
