@@ -60,6 +60,7 @@ export interface Entity {
   entityType: string;
   observations: string[];
   embedding?: EntityEmbedding;
+  version?: number;
 }
 
 // Re-export the Relation interface for backward compatibility

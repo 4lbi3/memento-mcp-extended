@@ -1,40 +1,29 @@
-import { v4 as uuidv4 } from 'uuid';
 import { LRUCache } from 'lru-cache';
 import type { StorageProvider } from '../storage/StorageProvider.js';
 import type { EmbeddingService } from './EmbeddingService.js';
 import type { Entity } from '../KnowledgeGraphManager.js';
 import type { EntityEmbedding } from '../types/entity-embedding.js';
+import { Neo4jJobStore, type EnqueueJobParams, type JobProcessResults, type QueueStatus } from '../storage/neo4j/Neo4jJobStore.js';
 import crypto from 'crypto';
+import { logger } from '../utils/logger.js';
 
 /**
- * Job status type
+ * Interface for embedding storage provider, extending the base provider
  */
-type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+interface EmbeddingStorageProvider extends StorageProvider {
+  /**
+   * Get an entity by name
+   */
+  getEntity(entityName: string): Promise<Entity | null>;
 
-/**
- * Interface for a job record from the database
- */
-interface EmbeddingJob {
-  id: string;
-  entity_name: string;
-  status: JobStatus;
-  priority: number;
-  created_at: number;
-  processed_at?: number;
-  error?: string;
-  attempts: number;
-  max_attempts: number;
+  /**
+   * Store an entity vector embedding
+   */
+  storeEntityVector(entityName: string, embedding: EntityEmbedding): Promise<void>;
 }
 
 /**
- * Interface for count results from database
- */
-interface CountResult {
-  count: number;
-}
-
-/**
- * Interface for embedding cache options
+ * Interface for cache options
  */
 interface CacheOptions {
   size: number;
@@ -53,33 +42,6 @@ interface RateLimiterOptions {
 }
 
 /**
- * Interface for job processing results
- */
-interface JobProcessResults {
-  processed: number;
-  successful: number;
-  failed: number;
-}
-
-/**
- * Interface for the rate limiter status
- */
-interface RateLimiterStatus {
-  availableTokens: number;
-  maxTokens: number;
-  resetInMs: number;
-}
-
-/**
- * Interface for a cached embedding entry
- */
-interface CachedEmbedding {
-  embedding: number[];
-  timestamp: number;
-  model: string;
-}
-
-/**
  * Interface for a logger
  */
 interface Logger {
@@ -90,35 +52,12 @@ interface Logger {
 }
 
 /**
- * Interface for embedding storage provider, extending the base provider
+ * Interface for a cached embedding entry
  */
-interface EmbeddingStorageProvider extends StorageProvider {
-  /**
-   * Access to the underlying database
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: any; // Using any to avoid the Database namespace issue
-
-  /**
-   * Get an entity by name
-   */
-  getEntity(entityName: string): Promise<Entity | null>;
-
-  /**
-   * Store an entity vector embedding
-   */
-  storeEntityVector(entityName: string, embedding: EntityEmbedding): Promise<void>;
-}
-
-/**
- * Return structure for queue status
- */
-interface QueueStatus {
-  pending: number;
-  processing: number;
-  completed: number;
-  failed: number;
-  totalJobs: number;
+interface CachedEmbedding {
+  embedding: number[];
+  timestamp: number;
+  model: string;
 }
 
 /**
@@ -132,11 +71,12 @@ const nullLogger: Logger = {
 };
 
 /**
- * Manages embedding jobs for semantic search
+ * Neo4j-backed embedding job manager for semantic search
  */
-export class EmbeddingJobManager {
+export class Neo4jEmbeddingJobManager {
   private storageProvider: EmbeddingStorageProvider;
   private embeddingService: EmbeddingService;
+  private jobStore: Neo4jJobStore;
   public rateLimiter: {
     tokens: number;
     lastRefill: number;
@@ -146,26 +86,33 @@ export class EmbeddingJobManager {
   public cache: LRUCache<string, CachedEmbedding>;
   private cacheOptions: CacheOptions = { size: 1000, ttl: 3600000 };
   private logger: Logger;
+  private workerId: string;
 
   /**
-   * Creates a new embedding job manager
+   * Creates a new Neo4j embedding job manager
    *
    * @param storageProvider - Provider for entity storage
    * @param embeddingService - Service to generate embeddings
+   * @param jobStore - Neo4j job store for queue management
    * @param rateLimiterOptions - Optional configuration for rate limiting
    * @param cacheOptions - Optional configuration for caching
    * @param logger - Optional logger for operation logging
+   * @param workerId - Unique identifier for this worker instance
    */
   constructor(
     storageProvider: EmbeddingStorageProvider,
     embeddingService: EmbeddingService,
+    jobStore: Neo4jJobStore,
     rateLimiterOptions?: RateLimiterOptions | null,
     cacheOptions?: CacheOptions | null,
-    logger?: Logger | null
+    logger?: Logger | null,
+    workerId?: string
   ) {
     this.storageProvider = storageProvider;
     this.embeddingService = embeddingService;
+    this.jobStore = jobStore;
     this.logger = logger || nullLogger;
+    this.workerId = workerId || `worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     // Setup rate limiter with defaults
     const defaultRateLimiter = {
@@ -202,50 +149,12 @@ export class EmbeddingJobManager {
       ttlAutopurge: true,
     });
 
-    // Initialize database schema
-    this._initializeDatabase();
-
-    this.logger.info('EmbeddingJobManager initialized', {
+    this.logger.info('Neo4jEmbeddingJobManager initialized', {
       cacheSize: this.cacheOptions.size,
       cacheTtl: this.cacheOptions.ttl,
       rateLimit: `${this.rateLimiter.tokensPerInterval} per ${this.rateLimiter.interval}ms`,
+      workerId: this.workerId,
     });
-  }
-
-  /**
-   * Initialize the database schema for embedding jobs
-   *
-   * @private
-   */
-  private _initializeDatabase(): void {
-    const createTableSql = `
-      CREATE TABLE IF NOT EXISTS embedding_jobs (
-        id TEXT PRIMARY KEY,
-        entity_name TEXT NOT NULL,
-        status TEXT NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL,
-        processed_at INTEGER,
-        error TEXT,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        max_attempts INTEGER NOT NULL DEFAULT 3
-      )
-    `;
-
-    // Create an index for efficient job retrieval
-    const createIndexSql = `
-      CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status_priority
-      ON embedding_jobs (status, priority DESC)
-    `;
-
-    try {
-      this.storageProvider.db.exec(createTableSql);
-      this.storageProvider.db.exec(createIndexSql);
-      this.logger.debug('Database schema initialized for embedding jobs');
-    } catch (error) {
-      this.logger.error('Failed to initialize database schema', { error });
-      throw error;
-    }
   }
 
   /**
@@ -253,9 +162,9 @@ export class EmbeddingJobManager {
    *
    * @param entityName - Name of the entity to generate embedding for
    * @param priority - Optional priority (higher priority jobs are processed first)
-   * @returns Job ID
+   * @returns Job ID if enqueued, null if already exists
    */
-  async scheduleEntityEmbedding(entityName: string, priority = 1): Promise<string> {
+  async scheduleEntityEmbedding(entityName: string, priority = 1): Promise<string | null> {
     // Verify entity exists
     const entity = await this.storageProvider.getEntity(entityName);
     if (!entity) {
@@ -264,23 +173,32 @@ export class EmbeddingJobManager {
       throw new Error(error);
     }
 
-    // Create a job ID
-    const jobId = uuidv4();
+    // Get model info for job parameters
+    const modelInfo = this.embeddingService.getModelInfo();
 
-    // Insert a new job record
-    const stmt = this.storageProvider.db.prepare(`
-      INSERT INTO embedding_jobs (
-        id, entity_name, status, priority, created_at, attempts, max_attempts
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(jobId, entityName, 'pending', priority, Date.now(), 0, 3);
-
-    this.logger.info('Scheduled embedding job', {
-      jobId,
-      entityName,
+    // Enqueue the job
+    const jobParams: EnqueueJobParams = {
+      entity_uid: entityName,
+      model: modelInfo.name,
+      version: String(entity.version ?? 1),
       priority,
-    });
+    };
+
+    const jobId = await this.jobStore.enqueueJob(jobParams);
+
+    if (jobId) {
+      this.logger.info('Scheduled embedding job', {
+        jobId,
+        entityName,
+        priority,
+        model: modelInfo.name,
+      });
+    } else {
+      this.logger.debug('Job already exists for entity', {
+        entityName,
+        model: modelInfo.name,
+      });
+    }
 
     return jobId;
   }
@@ -289,21 +207,15 @@ export class EmbeddingJobManager {
    * Process a batch of pending embedding jobs
    *
    * @param batchSize - Maximum number of jobs to process
+   * @param lockDuration - How long to lock jobs for processing (default: 5 minutes)
    * @returns Result statistics
    */
-  async processJobs(batchSize = 10): Promise<JobProcessResults> {
-    this.logger.info('Starting job processing', { batchSize });
+  async processJobs(batchSize = 10, lockDuration = 5 * 60 * 1000): Promise<JobProcessResults> {
+    this.logger.info('Starting job processing', { batchSize, lockDuration });
 
-    // Get pending jobs, ordered by priority (highest first)
-    const stmt = this.storageProvider.db.prepare(`
-      SELECT * FROM embedding_jobs
-      WHERE status = 'pending'
-      ORDER BY priority DESC, created_at ASC
-      LIMIT ?
-    `);
-
-    const jobs: EmbeddingJob[] = stmt.all(batchSize);
-    this.logger.debug('Found pending jobs', { count: jobs.length });
+    // Lease jobs for processing
+    const leasedJobs = await this.jobStore.leaseJobs(batchSize, this.workerId, lockDuration);
+    this.logger.debug('Leased jobs for processing', { count: leasedJobs.length });
 
     // Initialize counters
     const result: JobProcessResults = {
@@ -312,38 +224,35 @@ export class EmbeddingJobManager {
       failed: 0,
     };
 
-    // Process each job
-    for (const job of jobs) {
+    // Process each leased job
+    for (const job of leasedJobs) {
       // Check rate limiter before processing
       const rateLimitCheck = this._checkRateLimiter();
       if (!rateLimitCheck.success) {
         this.logger.warn('Rate limit reached, pausing job processing', {
-          remaining: jobs.length - result.processed,
+          remaining: leasedJobs.length - result.processed,
         });
         break; // Stop processing jobs if rate limit is reached
       }
 
       this.logger.info('Processing embedding job', {
         jobId: job.id,
-        entityName: job.entity_name,
-        attempt: job.attempts + 1,
+        entityName: job.entity_uid,
+        attempt: job.attempts,
         maxAttempts: job.max_attempts,
       });
 
-      // Update job status to processing
-      this._updateJobStatus(job.id, 'processing', job.attempts + 1);
-
       try {
         // Get the entity
-        const entity = await this.storageProvider.getEntity(job.entity_name);
+        const entity = await this.storageProvider.getEntity(job.entity_uid);
 
         if (!entity) {
-          throw new Error(`Entity ${job.entity_name} not found`);
+          throw new Error(`Entity ${job.entity_uid} not found`);
         }
 
         // Log entity details for debugging
         this.logger.debug('Retrieved entity for embedding', {
-          entityName: job.entity_name,
+          entityName: job.entity_uid,
           entityType: entity.entityType,
           hasObservations: entity.observations ? 'yes' : 'no',
           observationsType: entity.observations ? typeof entity.observations : 'undefined',
@@ -357,32 +266,32 @@ export class EmbeddingJobManager {
         const text = this._prepareEntityText(entity);
 
         // Try to get from cache or generate new embedding
-        this.logger.debug('Generating embedding for entity', { entityName: job.entity_name });
+        this.logger.debug('Generating embedding for entity', { entityName: job.entity_uid });
         const embedding = await this._getCachedEmbeddingOrGenerate(text);
-
-        // Get model info for embedding metadata
-        const modelInfo = this.embeddingService.getModelInfo();
 
         // Store the embedding with the entity
         this.logger.debug('Storing entity vector', {
-          entityName: job.entity_name,
+          entityName: job.entity_uid,
           vectorLength: embedding.length,
-          model: modelInfo.name,
+          model: job.model,
         });
 
-        await this.storageProvider.storeEntityVector(job.entity_name, {
+        await this.storageProvider.storeEntityVector(job.entity_uid, {
           vector: embedding,
-          model: modelInfo.name,
+          model: job.model,
           lastUpdated: Date.now(),
         });
 
-        // Update job status to completed
-        this._updateJobStatus(job.id, 'completed');
+        // Complete the job
+        const completed = await this.jobStore.completeJob(job.id, this.workerId);
+        if (!completed) {
+          this.logger.warn('Failed to mark job as completed', { jobId: job.id });
+        }
 
         this.logger.info('Successfully processed embedding job', {
           jobId: job.id,
-          entityName: job.entity_name,
-          model: modelInfo.name,
+          entityName: job.entity_uid,
+          model: job.model,
           dimensions: embedding.length,
         });
 
@@ -394,18 +303,17 @@ export class EmbeddingJobManager {
 
         this.logger.error('Failed to process embedding job', {
           jobId: job.id,
-          entityName: job.entity_name,
+          entityName: job.entity_uid,
           error: errorMessage,
           errorStack,
-          attempt: job.attempts + 1,
+          attempt: job.attempts,
           maxAttempts: job.max_attempts,
         });
 
-        // Determine if we should mark as failed or keep for retry
-        if (job.attempts + 1 >= job.max_attempts) {
-          this._updateJobStatus(job.id, 'failed', job.attempts + 1, errorMessage);
-        } else {
-          this._updateJobStatus(job.id, 'pending', job.attempts + 1, errorMessage);
+        // Fail the job (this will mark as failed or retry based on attempts)
+        const failed = await this.jobStore.failJob(job.id, this.workerId, errorMessage);
+        if (!failed) {
+          this.logger.warn('Failed to mark job as failed', { jobId: job.id });
         }
 
         result.failed++;
@@ -414,8 +322,14 @@ export class EmbeddingJobManager {
       result.processed++;
     }
 
+    // Send heartbeat for any remaining leased jobs (in case of early termination)
+    if (leasedJobs.length > result.processed) {
+      const remainingJobIds = leasedJobs.slice(result.processed).map(job => job.id);
+      await this.jobStore.heartbeatJobs(remainingJobIds, this.workerId, lockDuration);
+    }
+
     // Log job processing results
-    const queueStatus = await this.getQueueStatus();
+    const queueStatus = await this.jobStore.getQueueStatus();
     this.logger.info('Job processing complete', {
       processed: result.processed,
       successful: result.successful,
@@ -432,38 +346,7 @@ export class EmbeddingJobManager {
    * @returns Queue statistics
    */
   async getQueueStatus(): Promise<QueueStatus> {
-    const getCountForStatus = (status?: string): number => {
-      let sql = 'SELECT COUNT(*) as count FROM embedding_jobs';
-      const params: string[] = [];
-
-      if (status) {
-        sql += ' WHERE status = ?';
-        params.push(status);
-      }
-
-      const stmt = this.storageProvider.db.prepare(sql);
-      const result: CountResult = stmt.get(...params);
-
-      return result?.count || 0;
-    };
-
-    const pending = getCountForStatus('pending');
-    const processing = getCountForStatus('processing');
-    const completed = getCountForStatus('completed');
-    const failed = getCountForStatus('failed');
-    const total = getCountForStatus();
-
-    const result = {
-      pending,
-      processing,
-      completed,
-      failed,
-      totalJobs: total,
-    };
-
-    this.logger.debug('Retrieved queue status', result);
-
-    return result;
+    return await this.jobStore.getQueueStatus();
   }
 
   /**
@@ -472,17 +355,8 @@ export class EmbeddingJobManager {
    * @returns Number of jobs reset for retry
    */
   async retryFailedJobs(): Promise<number> {
-    const stmt = this.storageProvider.db.prepare(`
-      UPDATE embedding_jobs
-      SET status = 'pending', attempts = 0
-      WHERE status = 'failed'
-    `);
-
-    const result = stmt.run();
-    const resetCount = result.changes || 0;
-
+    const resetCount = await this.jobStore.retryFailedJobs();
     this.logger.info('Reset failed jobs for retry', { count: resetCount });
-
     return resetCount;
   }
 
@@ -493,80 +367,25 @@ export class EmbeddingJobManager {
    * @returns Number of jobs cleaned up
    */
   async cleanupJobs(retentionDays = 14): Promise<number> {
-    // For backward compatibility, if a very large number is passed, assume it's milliseconds
-    // Convert to days (any value > 100 is likely milliseconds)
-    const actualRetentionDays = retentionDays > 100
-      ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
-      : retentionDays;
-
-    const cleanupThreshold = actualRetentionDays * 24 * 60 * 60 * 1000; // Convert days to milliseconds
-    const cutoffTime = Date.now() - cleanupThreshold;
-
-    const stmt = this.storageProvider.db.prepare(`
-      DELETE FROM embedding_jobs
-      WHERE (status = 'completed' OR status = 'failed')
-      AND processed_at < ?
-      AND processed_at IS NOT NULL
-    `);
-
-    const result = stmt.run(cutoffTime);
-    const deletedCount = result.changes || 0;
-
+    const deletedCount = await this.jobStore.scheduledCleanupJobs(retentionDays);
     this.logger.info('Cleaned up old completed/failed jobs', {
       count: deletedCount,
-      retentionDays: actualRetentionDays,
-      olderThan: new Date(cutoffTime).toISOString(),
+      retentionDays
     });
-
     return deletedCount;
   }
 
   /**
-   * Update a job's status in the database
+   * Send heartbeat for all currently leased jobs
    *
-   * @private
-   * @param jobId - ID of the job to update
-   * @param status - New status
-   * @param attempts - Optional attempts count update
-   * @param error - Optional error message
-   * @returns Database result
+   * @param lockDuration - How long to extend the lock
+   * @returns Number of jobs heartbeated
    */
-  private _updateJobStatus(
-    jobId: string,
-    status: JobStatus,
-    attempts?: number,
-    error?: string
-  ): Record<string, unknown> {
-    let sql = `
-      UPDATE embedding_jobs
-      SET status = ?
-    `;
-
-    const params: (string | number)[] = [status];
-
-    // Add processed_at timestamp for completed/failed statuses
-    if (status === 'completed' || status === 'failed') {
-      sql += ', processed_at = ?';
-      params.push(Date.now());
-    }
-
-    // Update attempts if provided
-    if (attempts !== undefined) {
-      sql += ', attempts = ?';
-      params.push(attempts);
-    }
-
-    // Include error message if provided
-    if (error) {
-      sql += ', error = ?';
-      params.push(error);
-    }
-
-    sql += ' WHERE id = ?';
-    params.push(jobId);
-
-    const stmt = this.storageProvider.db.prepare(sql);
-    return stmt.run(...params);
+  async heartbeatJobs(lockDuration = 5 * 60 * 1000): Promise<number> {
+    // For now, we don't track which jobs we have leased, so this is a no-op
+    // In a real implementation, we'd track leased jobs and heartbeat them
+    this.logger.debug('Heartbeat requested but not implemented for tracking leased jobs');
+    return 0;
   }
 
   /**
@@ -576,7 +395,6 @@ export class EmbeddingJobManager {
    * @returns Object with success flag
    */
   _checkRateLimiter(): { success: boolean } {
-    // For testing purposes, make it public by removing 'private'
     const now = Date.now();
     const elapsed = now - this.rateLimiter.lastRefill;
 
@@ -625,7 +443,7 @@ export class EmbeddingJobManager {
    *
    * @returns Rate limiter status information
    */
-  getRateLimiterStatus(): RateLimiterStatus {
+  getRateLimiterStatus() {
     const now = Date.now();
     const elapsed = now - this.rateLimiter.lastRefill;
 

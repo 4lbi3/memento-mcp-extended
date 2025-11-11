@@ -573,7 +573,7 @@ describe('EmbeddingJobManager', () => {
 
       // Verify it contains the essential parts
       expect(sql).toContain('DELETE FROM embedding_jobs');
-      expect(sql).toContain("WHERE status = 'completed'");
+      expect(sql).toContain("WHERE (status = 'completed' OR status = 'failed')");
       expect(sql).toContain('processed_at < ?');
     });
 
@@ -598,7 +598,7 @@ describe('EmbeddingJobManager', () => {
 
       // Verify it contains the essential parts
       expect(sql).toContain('DELETE FROM embedding_jobs');
-      expect(sql).toContain("WHERE status = 'completed'");
+      expect(sql).toContain("WHERE (status = 'completed' OR status = 'failed')");
       expect(sql).toContain('processed_at < ?');
     });
   });

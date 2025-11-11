@@ -72,6 +72,66 @@ Memento MCP uses Neo4j as its storage backend, providing a unified solution for 
 ### Prerequisites
 
 - Neo4j 5.13+ (required for vector search capabilities)
+- Node.js 20+ and npm
+
+### Schema Setup
+
+Before running Memento MCP, initialize the Neo4j schema:
+
+```bash
+# Install dependencies
+npm install
+
+# Initialize Neo4j schema (includes constraints and indexes for embedding jobs)
+npx neo4j-cli init --uri bolt://localhost:7687 --username neo4j --password your_password
+```
+
+This creates:
+- Entity constraints and vector indexes
+- Embedding job queue schema with lease-based locking
+- Required indexes for efficient job processing
+
+### Embedding Job Queue
+
+Every time you create an entity or add observations, Memento enqueues an `:EmbedJob` node inside Neo4j.  
+Each job is uniquely identified by `(entity_uid, model, version)`, so every entity version automatically gets a fresh embedding.  
+The MCP server runs a background worker (default every 10 seconds) that:
+
+- Leases pending jobs (`status: 'pending'`) with a short lock to avoid duplicates
+- Generates embeddings via the configured provider
+- Stores the vector back on the entity node
+- Marks the job as `completed` (or `failed` with a retry counter)
+
+You can inspect the queue at any time:
+
+```cypher
+MATCH (job:EmbedJob)
+WHERE job.status <> 'completed'
+RETURN job.entity_uid AS entity,
+       job.status AS status,
+       job.attempts AS attempts,
+       job.lock_owner AS lockOwner,
+       job.lock_until AS lockUntil,
+       job.error AS lastError
+ORDER BY job.created_at ASC;
+```
+
+To purge stale completed jobs (for example older than 7 days):
+
+```cypher
+MATCH (job:EmbedJob)
+WHERE job.status = 'completed' AND job.processed_at < timestamp() - 7*24*60*60*1000
+DELETE job;
+```
+
+If you want to remove **all** jobs (use with care):
+
+```cypher
+MATCH (job:EmbedJob)
+DETACH DELETE job;
+```
+
+These same cleanup routines are also exposed programmatically via `Neo4jJobStore.cleanupJobs()`.
 
 ### Neo4j Desktop Setup (Recommended)
 
@@ -442,6 +502,17 @@ NEO4J_VECTOR_INDEX=entity_embeddings
 NEO4J_VECTOR_DIMENSIONS=1536
 NEO4J_SIMILARITY_FUNCTION=cosine
 
+# Dedicated Embedding Job Database (optional)
+# These settings isolate embedding job queue data from the main knowledge graph
+EMBED_JOB_DATABASE_URI=bolt://127.0.0.1:7687
+EMBED_JOB_DATABASE_USERNAME=neo4j
+EMBED_JOB_DATABASE_PASSWORD=memento_password
+EMBED_JOB_DATABASE_NAME=embedding-jobs
+
+# Job Retention Configuration (required)
+# Controls how long completed/failed embedding jobs are retained (7-30 days)
+EMBED_JOB_RETENTION_DAYS=14
+
 # Embedding Service Configuration
 MEMORY_STORAGE_TYPE=neo4j
 OPENAI_API_KEY=your-openai-api-key
@@ -450,6 +521,54 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 # Debug Settings
 DEBUG=true
 ```
+
+### Dedicated Embedding Job Database
+
+For production deployments, Memento MCP supports isolating embedding job queue data from the main knowledge graph to improve performance and simplify maintenance. This feature requires Neo4j Enterprise Edition.
+
+#### Database Setup
+
+> **Good to know:** On startup the MCP server attempts to create the `embedding-jobs` database (and its constraints/indexes) automatically if the configured Neo4j user has admin permissions. If the user is read/write only, run the steps below manually once.
+
+1. **Create the dedicated database** (Neo4j Enterprise only):
+   ```cypher
+   CREATE DATABASE `embedding-jobs` IF NOT EXISTS;
+   ```
+
+2. **Grant permissions** for the job database user:
+   ```cypher
+   CREATE USER jobuser IF NOT EXISTS SET PASSWORD 'jobpassword';
+   GRANT ROLE reader TO jobuser;
+   GRANT ROLE publisher TO jobuser;
+   USE embedding-jobs;
+   GRANT ALL ON DATABASE embedding-jobs TO jobuser;
+   ```
+
+3. **Configure environment variables** to point to the dedicated database:
+   ```bash
+   EMBED_JOB_DATABASE_URI=bolt://your-neo4j-server:7687
+   EMBED_JOB_DATABASE_USERNAME=jobuser
+   EMBED_JOB_DATABASE_PASSWORD=jobpassword
+   EMBED_JOB_DATABASE_NAME=embedding-jobs
+   ```
+
+#### Benefits
+
+- **Performance isolation**: Job queue operations don't compete with knowledge graph queries
+- **Simplified backups**: Knowledge graph backups exclude volatile job data
+- **Independent monitoring**: Track job queue metrics separately from entity data
+- **Retention management**: Automatic cleanup of old jobs prevents unbounded growth
+
+#### Job Retention
+
+Configure how long completed and failed jobs are retained:
+
+```bash
+# Retain jobs for 14 days (default, allowed range: 7-30 days)
+EMBED_JOB_RETENTION_DAYS=14
+```
+
+Jobs are automatically cleaned up daily using APOC periodic iterate for efficient bulk operations.
 
 ### Command Line Options
 
@@ -512,6 +631,7 @@ Add this to your `claude_desktop_config.json`:
         "NEO4J_VECTOR_INDEX": "entity_embeddings",
         "NEO4J_VECTOR_DIMENSIONS": "1536",
         "NEO4J_SIMILARITY_FUNCTION": "cosine",
+        "EMBED_JOB_RETENTION_DAYS": "14",
         "OPENAI_API_KEY": "your-openai-api-key",
         "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
         "DEBUG": "true"
@@ -538,6 +658,7 @@ Alternatively, for local development, you can use:
         "NEO4J_VECTOR_INDEX": "entity_embeddings",
         "NEO4J_VECTOR_DIMENSIONS": "1536",
         "NEO4J_SIMILARITY_FUNCTION": "cosine",
+        "EMBED_JOB_RETENTION_DAYS": "14",
         "OPENAI_API_KEY": "your-openai-api-key",
         "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
         "DEBUG": "true"

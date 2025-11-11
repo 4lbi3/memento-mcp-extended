@@ -7,6 +7,7 @@
  * operations for the Memento MCP project.
  */
 
+import 'dotenv/config';
 import { Neo4jConnectionManager } from '../storage/neo4j/Neo4jConnectionManager.js';
 import { Neo4jSchemaManager } from '../storage/neo4j/Neo4jSchemaManager.js';
 import { DEFAULT_NEO4J_CONFIG, type Neo4jConfig } from '../storage/neo4j/Neo4jConfig.js';
@@ -167,6 +168,10 @@ export async function initializeSchema(
     // Create entity constraints
     console.log('Creating entity constraints...');
     await schemaManager.createEntityConstraints(recreate);
+
+    // Create embedding job constraints and indexes
+    console.log('Creating embedding job constraints and indexes...');
+    await schemaManager.createEmbedJobConstraints(recreate);
 
     // Create vector index for entity embeddings
     console.log(`Creating vector index "${config.vectorIndexName}"...`);
