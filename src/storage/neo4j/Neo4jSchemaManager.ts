@@ -125,6 +125,74 @@ export class Neo4jSchemaManager {
   }
 
   /**
+   * Creates constraints and indexes for embedding job management
+   * @param recreate Whether to drop and recreate the constraints/indexes if they exist
+   */
+  async createEmbedJobConstraints(recreate = false): Promise<void> {
+    this.log('Creating embedding job constraints and indexes...');
+
+    // Create a composite uniqueness constraint to prevent duplicate jobs
+    // for the same entity, model, and version
+    const uniquenessConstraintName = 'embed_job_uniqueness';
+
+    if (recreate) {
+      await this.dropConstraintIfExists(uniquenessConstraintName);
+    }
+
+    const uniquenessQuery = `
+      CREATE CONSTRAINT embed_job_uniqueness IF NOT EXISTS
+      FOR (j:EmbedJob)
+      REQUIRE (j.entity_uid, j.model, j.version) IS UNIQUE
+    `;
+
+    await this.connectionManager.executeQuery(uniquenessQuery, {});
+    this.log('EmbedJob uniqueness constraint created');
+
+    // Create index on status for efficient querying of pending jobs
+    const statusIndexName = 'embed_job_status';
+
+    if (recreate) {
+      await this.dropIndexIfExists(statusIndexName);
+    }
+
+    const statusIndexQuery = `
+      CREATE INDEX embed_job_status IF NOT EXISTS
+      FOR (j:EmbedJob)
+      ON (j.status)
+    `;
+
+    await this.connectionManager.executeQuery(statusIndexQuery, {});
+    this.log('EmbedJob status index created');
+
+    // Create index on lock_until for efficient lease expiry queries
+    const lockIndexName = 'embed_job_lock_until';
+
+    if (recreate) {
+      await this.dropIndexIfExists(lockIndexName);
+    }
+
+    const lockIndexQuery = `
+      CREATE INDEX embed_job_lock_until IF NOT EXISTS
+      FOR (j:EmbedJob)
+      ON (j.lock_until)
+    `;
+
+    await this.connectionManager.executeQuery(lockIndexQuery, {});
+    this.log('EmbedJob lock_until index created');
+
+    // Verify the constraints and indexes were created
+    const constraints = await this.listConstraints();
+    const uniquenessFound = constraints.some((c) => c.name === uniquenessConstraintName);
+    this.log(`EmbedJob uniqueness constraint verification: ${uniquenessFound ? 'FOUND' : 'NOT FOUND'}`);
+
+    const indexes = await this.listIndexes();
+    const statusIndexFound = indexes.some((i) => i.name === statusIndexName);
+    const lockIndexFound = indexes.some((i) => i.name === lockIndexName);
+    this.log(`EmbedJob status index verification: ${statusIndexFound ? 'FOUND' : 'NOT FOUND'}`);
+    this.log(`EmbedJob lock_until index verification: ${lockIndexFound ? 'FOUND' : 'NOT FOUND'}`);
+  }
+
+  /**
    * Creates a vector index for storing and querying embeddings
    *
    * @param indexName The name of the vector index
@@ -240,6 +308,9 @@ export class Neo4jSchemaManager {
 
     // Create constraints
     await this.createEntityConstraints(recreate);
+
+    // Create embedding job constraints and indexes
+    await this.createEmbedJobConstraints(recreate);
 
     // Create vector index for entity embeddings
     const indexName = this.config.vectorIndexName;

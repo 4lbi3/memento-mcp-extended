@@ -5,6 +5,24 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.2] - 2025-11-11
+
+### Added
+- Neo4j-backed embedding job queue is now documented in the README, including Cypher snippets to inspect, clean up, or purge `:EmbedJob` nodes.
+- OpenSpec change `refactor-embedding-job-manager` archived after successful validation.
+
+### Changed
+- Embedding jobs now store per-entity version IDs, so each entity version automatically receives a fresh embedding.
+- Queue Cypher queries force integer parameters (`toInteger(...)`) to avoid `10.0` vs `10` issues when leasing jobs.
+- Default job creation initializes all diagnostic fields (`lock_owner`, `lock_until`, `error`, `processed_at`) so Cypher queries can safely access them.
+- `EmbeddingJobManager` now reads the real entity `version` from Neo4j and schedules an idempotent job per version.
+- Knowledge graph `Entity` interface now exposes the optional `version` field returned by Neo4j.
+
+### Fixed
+- Background worker no longer crashes when leasing jobs in environments that serialize numbers as floats.
+- Jobs scheduled after observation updates now actually enqueue (the previous logic hard-coded version `1` and skipped new versions).
+- Documentation explains how to monitor and clean the job queue, preventing confusion about “stuck” `:EmbedJob` nodes.
+
 ## [0.3.9.1] - 2025-11-11
 
 ### Added

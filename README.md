@@ -72,6 +72,66 @@ Memento MCP uses Neo4j as its storage backend, providing a unified solution for 
 ### Prerequisites
 
 - Neo4j 5.13+ (required for vector search capabilities)
+- Node.js 20+ and npm
+
+### Schema Setup
+
+Before running Memento MCP, initialize the Neo4j schema:
+
+```bash
+# Install dependencies
+npm install
+
+# Initialize Neo4j schema (includes constraints and indexes for embedding jobs)
+npx neo4j-cli init --uri bolt://localhost:7687 --username neo4j --password your_password
+```
+
+This creates:
+- Entity constraints and vector indexes
+- Embedding job queue schema with lease-based locking
+- Required indexes for efficient job processing
+
+### Embedding Job Queue
+
+Every time you create an entity or add observations, Memento enqueues an `:EmbedJob` node inside Neo4j.  
+Each job is uniquely identified by `(entity_uid, model, version)`, so every entity version automatically gets a fresh embedding.  
+The MCP server runs a background worker (default every 10 seconds) that:
+
+- Leases pending jobs (`status: 'pending'`) with a short lock to avoid duplicates
+- Generates embeddings via the configured provider
+- Stores the vector back on the entity node
+- Marks the job as `completed` (or `failed` with a retry counter)
+
+You can inspect the queue at any time:
+
+```cypher
+MATCH (job:EmbedJob)
+WHERE job.status <> 'completed'
+RETURN job.entity_uid AS entity,
+       job.status AS status,
+       job.attempts AS attempts,
+       job.lock_owner AS lockOwner,
+       job.lock_until AS lockUntil,
+       job.error AS lastError
+ORDER BY job.created_at ASC;
+```
+
+To purge stale completed jobs (for example older than 7 days):
+
+```cypher
+MATCH (job:EmbedJob)
+WHERE job.status = 'completed' AND job.processed_at < timestamp() - 7*24*60*60*1000
+DELETE job;
+```
+
+If you want to remove **all** jobs (use with care):
+
+```cypher
+MATCH (job:EmbedJob)
+DETACH DELETE job;
+```
+
+These same cleanup routines are also exposed programmatically via `Neo4jJobStore.cleanupJobs()`.
 
 ### Neo4j Desktop Setup (Recommended)
 

@@ -72,6 +72,6 @@ describe('Neo4jSchemaManager', () => {
   it('should initialize the schema', async () => {
     await schemaManager.initializeSchema();
 
-    expect(connectionManager.executeQuery).toHaveBeenCalledTimes(3);
+    expect(connectionManager.executeQuery).toHaveBeenCalledTimes(8);
   });
 });

@@ -129,6 +129,7 @@ describe('Neo4j CLI Utility', () => {
         listConstraints: vi.fn().mockResolvedValue([]),
         listIndexes: vi.fn().mockResolvedValue([]),
         createEntityConstraints: vi.fn().mockResolvedValue(undefined),
+        createEmbedJobConstraints: vi.fn().mockResolvedValue(undefined),
         createVectorIndex: vi.fn().mockResolvedValue(undefined),
         vectorIndexExists: vi.fn().mockResolvedValue(true),
         close: vi.fn().mockResolvedValue(undefined),

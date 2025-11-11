@@ -5,6 +5,8 @@ import { initializeStorageProvider } from './config/storage.js';
 import { setupServer } from './server/setup.js';
 import { EmbeddingJobManager } from './embeddings/EmbeddingJobManager.js';
 import { EmbeddingServiceFactory } from './embeddings/EmbeddingServiceFactory.js';
+import { Neo4jJobStore } from './storage/neo4j/Neo4jJobStore.js';
+import { Neo4jEmbeddingJobManager } from './embeddings/Neo4jEmbeddingJobManager.js';
 import { logger } from './utils/logger.js';
 
 // Re-export the types and classes for use in other modules
@@ -53,22 +55,20 @@ try {
   });
 
   // For Neo4j (which is always the storage provider)
+  // Access the connection manager from the Neo4j storage provider
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const connectionManager = (storageProvider as any).connectionManager;
+
+  if (!connectionManager) {
+    throw new Error('Neo4j storage provider does not have a connection manager');
+  }
+
+  // Create the Neo4j job store
+  const jobStore = new Neo4jJobStore(connectionManager, true);
+
   // Create a compatible wrapper for the Neo4j storage provider
   const adaptedStorageProvider = {
     ...storageProvider,
-    // Add a fake db with exec function for compatibility
-    db: {
-      exec: (sql: string) => {
-        logger.debug(`Neo4j adapter: Received SQL: ${sql}`);
-        // No-op, just for compatibility
-        return null;
-      },
-      prepare: () => ({
-        run: () => null,
-        all: () => [],
-        get: () => null,
-      }),
-    },
     // Make sure getEntity is available
     getEntity: async (name: string) => {
       if (typeof storageProvider.getEntity === 'function') {
@@ -111,15 +111,15 @@ try {
     },
   };
 
-  // Create the embedding job manager with adapted storage provider
-  embeddingJobManager = new EmbeddingJobManager(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    adaptedStorageProvider as any,
+  // Create the Neo4j embedding job manager with the job store
+  embeddingJobManager = new Neo4jEmbeddingJobManager(
+    adaptedStorageProvider,
     embeddingService,
+    jobStore,
     rateLimiterOptions,
     null, // Use default cache options
     logger
-  );
+  ) as any; // Cast to match EmbeddingJobManager interface
 
   // Schedule periodic processing for embedding jobs
   const EMBEDDING_PROCESS_INTERVAL = 10000; // 10 seconds - more frequent processing
