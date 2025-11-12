@@ -12,18 +12,49 @@ interface RunHandlerResult {
   records: Array<{ get?: (key: string) => unknown }>;
 }
 
-const neo4jRunHandler: {
-  current: (args: RunHandlerArgs) => Promise<RunHandlerResult>;
-} = {
-  current: async () => ({ records: [] }),
-};
+// Use vi.hoisted to properly declare all variables that will be used in factory functions
+const {
+  neo4jRunHandler,
+  setRunHandler,
+  createEmbedJobConstraintsMock,
+  neo4jSchemaManagerMock,
+  jobConnectionCloseMock,
+  createJobDatabaseConnectionManagerMock,
+} = vi.hoisted(() => {
+  const neo4jRunHandler: {
+    current: (args: RunHandlerArgs) => Promise<RunHandlerResult>;
+  } = {
+    current: async () => ({ records: [] }),
+  };
 
-function setRunHandler(
-  fn: (args: RunHandlerArgs) => Promise<RunHandlerResult>
-): (args: RunHandlerArgs) => Promise<RunHandlerResult> {
-  neo4jRunHandler.current = fn;
-  return fn;
-}
+  function setRunHandler(
+    fn: (args: RunHandlerArgs) => Promise<RunHandlerResult>
+  ) {
+    const spyFn = vi.fn(fn);
+    neo4jRunHandler.current = spyFn;
+    return spyFn;
+  }
+
+  const createEmbedJobConstraintsMock = vi.fn().mockResolvedValue(undefined);
+  const jobConnectionCloseMock = vi.fn().mockResolvedValue(undefined);
+
+  const neo4jSchemaManagerMock = vi.fn().mockImplementation(() => ({
+    createEmbedJobConstraints: createEmbedJobConstraintsMock,
+  }));
+
+  const createJobDatabaseConnectionManagerMock = vi.fn(() => ({
+    close: jobConnectionCloseMock,
+  }));
+
+  return {
+    neo4jRunHandler,
+    setRunHandler,
+    createEmbedJobConstraintsMock,
+    neo4jSchemaManagerMock,
+    jobConnectionCloseMock,
+    createJobDatabaseConnectionManagerMock,
+  };
+});
 
 vi.mock('neo4j-driver', () => {
   const driverMock = {
@@ -47,18 +78,8 @@ vi.mock('neo4j-driver', () => {
   };
 });
 
-const createEmbedJobConstraintsMock = vi.fn().mockResolvedValue(undefined);
-const neo4jSchemaManagerMock = vi.fn().mockImplementation(() => ({
-  createEmbedJobConstraints: createEmbedJobConstraintsMock,
-}));
-
 vi.mock('../../neo4j/Neo4jSchemaManager.js', () => ({
   Neo4jSchemaManager: neo4jSchemaManagerMock,
-}));
-
-const jobConnectionCloseMock = vi.fn().mockResolvedValue(undefined);
-const createJobDatabaseConnectionManagerMock = vi.fn(() => ({
-  close: jobConnectionCloseMock,
 }));
 
 vi.mock('../../neo4j/Neo4jConnectionManager.js', () => ({

@@ -5,6 +5,17 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.4] - 2025-11-12
+
+### Fixed
+- **Critical:** Fixed temporal relationship integrity issues in Neo4j storage provider
+  - `deleteObservations` now preserves all relationships through entity versioning
+  - All relationship creation operations validate entity temporal state (`validTo IS NULL`)
+  - Prevents creation of phantom relationships to archived entity versions
+  - Fixes relationship graph corruption that caused exponential relationship proliferation
+  - Refactored ~100 lines of duplicated versioning logic into shared `_createNewEntityVersion` method
+  - Added dedicated Neo4j temporal integrity tests that assert relationship recreation, metadata preservation, logging, and validation across all versioning paths
+
 ## [0.3.9.3] - 2025-11-11
 
 ### Added

@@ -1,5 +1,14 @@
 # Fix Temporal Relationship Integrity
 
+## Why
+The Neo4j storage provider has critical data integrity issues in its temporal versioning system that cause exponential proliferation of phantom relationships. This leads to graph corruption, unreliable semantic search, and storage bloat. The system must ensure that all entity versioning operations maintain complete bidirectional relationship integrity.
+
+## What Changes
+- Refactor entity versioning operations to centralize logic and eliminate relationship orphaning
+- Add temporal validation to all relationship creation operations
+- Create comprehensive test coverage for temporal integrity
+- Document the new temporal versioning capability in the specs
+
 ## Problem Statement
 
 The Neo4j storage provider currently has **critical data integrity issues** in its temporal versioning system that lead to graph corruption:

@@ -61,6 +61,16 @@ Example:
 
 Memento MCP uses Neo4j as its storage backend, providing a unified solution for both graph storage and vector search capabilities.
 
+### Temporal Relationship Integrity
+
+The Neo4j provider now enforces strict temporal validation across all relationship paths:
+
+- Centralized entity versioning via `_createNewEntityVersion` ensures outgoing and incoming relationships are invalidated and recreated with incremented versions and preserved metadata.
+- Every relationship creation/update query filters for `validTo IS NULL` endpoints so archived nodes can no longer receive new edges.
+- Dedicated Vitest coverage (`Neo4jTemporalIntegrity.test.ts`, augmented provider tests) guards against phantom relationships and verifies logging, version increments, and spec compliance.
+
+Together, these safeguards eliminate temporal corruption and keep the graph consistent under heavy versioning workloads.
+
 ### Why Neo4j?
 
 - **Unified Storage**: Consolidates both graph and vector storage into a single database

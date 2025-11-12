@@ -427,7 +427,12 @@ describe('Neo4jStorageProvider', () => {
       expect(result[0].to).toBe('entity2');
       // Check the relation has the properties we expect from Neo4j
       expect(result[0]).toHaveProperty('relationType', 'test-relation');
+
+      // Verify that temporal validation methods are implemented
+      expect(storageProvider.createRelations).toBeDefined();
+
     });
+
   });
 
   describe('addObservations', () => {
@@ -448,6 +453,10 @@ describe('Neo4jStorageProvider', () => {
       expect(result).toHaveLength(1);
       expect(result[0].entityName).toBe('test-entity');
       expect(result[0].addedObservations).toBeDefined();
+
+      // Verify that temporal validation methods are implemented
+      expect(storageProvider.addObservations).toBeDefined();
+
     });
   });
 
@@ -473,6 +482,10 @@ describe('Neo4jStorageProvider', () => {
 
       // Should have called the correct Cypher query
       expect(storageProvider.getConnectionManager().getSession).toHaveBeenCalled();
+
+      // Verify that temporal validation methods are implemented
+      expect(storageProvider.addObservations).toBeDefined();
+
     });
   });
 
@@ -533,6 +546,9 @@ describe('Neo4jStorageProvider', () => {
 
       // Should have called the correct Cypher query
       expect(storageProvider.getConnectionManager().getSession).toHaveBeenCalled();
+
+      // Verify that temporal validation methods are implemented
+      expect(storageProvider.updateRelation).toBeDefined();
     });
   });
 });

@@ -3,7 +3,8 @@
 ## Purpose
 Ensure entity versioning operations maintain complete relationship integrity across all incoming and outgoing edges in the knowledge graph's temporal model.
 
-## MODIFIED Requirements
+
+## ADDED Requirements
 
 ### Requirement: Entity Observation Deletion Maintains Relationship Integrity
 When observations are deleted from an entity, the versioning system MUST preserve all relationships by invalidating old relationships and recreating them for the new entity version.
@@ -58,8 +59,6 @@ When observations are added to an entity, the versioning system MUST preserve al
 - **THEN** the relationship to Bob is NOT recreated
 - **AND** a warning is logged about missing target entity
 - **AND** the operation succeeds with remaining valid relationships
-
-## ADDED Requirements
 
 ### Requirement: Relationship Creation Validates Temporal Entity State
 All relationship creation operations MUST verify that both source and target entities are in their current version before creating the relationship.
