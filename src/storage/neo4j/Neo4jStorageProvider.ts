@@ -614,6 +614,8 @@ export class Neo4jStorageProvider implements StorageProvider {
   /**
    * Create new entities in the knowledge graph
    * @param entities Array of entities to create
+   * @note Embeddings are generated asynchronously via job queue after entity creation
+   *       to avoid blocking database transactions with slow API calls
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async createEntities(entities: any[]): Promise<any[]> {
@@ -636,36 +638,6 @@ export class Neo4jStorageProvider implements StorageProvider {
             const now = Date.now();
             const entityId = uuidv4();
 
-            // Add debug log for embedding generation attempts
-            logger.debug(
-              `Neo4jStorageProvider: Processing embeddings for entity "${entity.name}"`,
-              {
-                entityType: entity.entityType,
-                hasEmbeddingService: !!this.embeddingService,
-              }
-            );
-
-            // Generate embedding if embedding service is available
-            let embedding = null;
-            if (this.embeddingService) {
-              try {
-                // Prepare text for embedding
-                const text = Array.isArray(entity.observations)
-                  ? entity.observations.join('\n')
-                  : '';
-
-                // Generate embedding using the instance's embedding service
-                embedding = await this.embeddingService.generateEmbedding(text);
-                logger.info(`Generated embedding for entity: ${entity.name}`);
-              } catch (error) {
-                logger.error(`Failed to generate embedding for entity: ${entity.name}`, error);
-                // Continue without embedding if generation fails
-              }
-            } else {
-              logger.warn(
-                `Neo4jStorageProvider: Skipping embedding for entity "${entity.name}" - No embedding service available`
-              );
-            }
 
             // Create entity with parameters
             const params = {
@@ -679,7 +651,6 @@ export class Neo4jStorageProvider implements StorageProvider {
               validFrom: entity.validFrom || now,
               validTo: null,
               changedBy: entity.changedBy || null,
-              embedding: embedding, // Add embedding directly to entity
             };
 
             // Create entity query
@@ -694,8 +665,7 @@ export class Neo4jStorageProvider implements StorageProvider {
                 updatedAt: $updatedAt,
                 validFrom: $validFrom,
                 validTo: $validTo,
-                changedBy: $changedBy,
-                embedding: $embedding
+                changedBy: $changedBy
               })
               RETURN e
             `;
@@ -708,7 +678,8 @@ export class Neo4jStorageProvider implements StorageProvider {
               const node = result.records[0].get('e').properties;
               const createdEntity = this.nodeToEntity(node);
               createdEntities.push(createdEntity);
-              logger.info(`Created entity with embedding: ${entity.name}`);
+              // Note: Embeddings are generated asynchronously via job queue after entity creation
+              logger.info(`Created entity: ${entity.name}`);
             }
           }
 
