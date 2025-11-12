@@ -58,24 +58,25 @@ vi.mock('../../neo4j/Neo4jConnectionManager', () => {
       return {
         getSession: vi.fn().mockResolvedValue({
           beginTransaction: vi.fn().mockReturnValue({
-            run: vi.fn().mockResolvedValue({
-              records: [
-                {
-                  get: vi.fn().mockImplementation((key) => {
-                    if (key === 'e') {
-                      return {
-                        properties: {
-                          id: 'test-id',
-                          name: 'test-entity',
-                          entityType: 'test',
-                          observations: JSON.stringify(['test observation']),
-                          version: 1,
-                          createdAt: 1234567890,
-                          updatedAt: 1234567890,
-                          validFrom: 1234567890,
-                          validTo: null,
-                        },
-                      };
+            run: vi.fn().mockImplementation((query, params) => {
+              return Promise.resolve({
+                records: [
+                  {
+                    get: vi.fn().mockImplementation((key) => {
+                      if (key === 'e') {
+                        return {
+                          properties: {
+                            id: 'test-id',
+                            name: params?.name || 'test-entity',
+                            entityType: params?.entityType || 'test',
+                            observations: params?.observations || JSON.stringify(['test observation']),
+                            version: 1,
+                            createdAt: params?.createdAt || 1234567890,
+                            updatedAt: params?.updatedAt || 1234567890,
+                            validFrom: params?.validFrom || 1234567890,
+                            validTo: null,
+                          },
+                        };
                     } else if (key === 'r') {
                       return {
                         properties: {
@@ -161,7 +162,8 @@ vi.mock('../../neo4j/Neo4jConnectionManager', () => {
                     return null;
                   }),
                 },
-              ],
+                ],
+              });
             }),
             commit: vi.fn().mockResolvedValue(undefined),
             rollback: vi.fn().mockResolvedValue(undefined),
@@ -403,6 +405,58 @@ describe('Neo4jStorageProvider', () => {
       expect(result[0].name).toBe('test-entity');
       // Check the entity has an ID property (we can't assert exact value as it's dynamic)
       expect(result[0]).toHaveProperty('id');
+    });
+
+    it('should create entities without synchronous embedding generation', async () => {
+      const entities: Entity[] = [
+        {
+          name: 'test-entity-no-embedding',
+          entityType: 'test',
+          observations: ['test observation'],
+        },
+      ];
+
+      // Mock the embedding service to track if it gets called
+      const mockEmbeddingService = {
+        generateEmbedding: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      };
+
+      // Set the embedding service on the storage provider
+      (storageProvider as any).embeddingService = mockEmbeddingService;
+
+      const result = await storageProvider.createEntities(entities);
+
+      // Should have created the entity successfully
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('test-entity-no-embedding');
+
+      // Should NOT have called the embedding service during entity creation
+      expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('should create multiple entities quickly without synchronous embeddings', async () => {
+      const entities: Entity[] = Array.from({ length: 10 }, (_, i) => ({
+        name: `performance-test-entity-${i}`,
+        entityType: 'performance-test',
+        observations: [`Performance test observation ${i}`],
+      }));
+
+      const startTime = Date.now();
+      const result = await storageProvider.createEntities(entities);
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+
+      // Should have created all 10 entities
+      expect(result).toHaveLength(10);
+
+      // Should complete in less than 200ms (vs previous ~20s with sync embeddings)
+      expect(duration).toBeLessThan(200);
+
+      // Verify entity names
+      result.forEach((entity, i) => {
+        expect(entity.name).toBe(`performance-test-entity-${i}`);
+        expect(entity.entityType).toBe('performance-test');
+      });
     });
   });
 

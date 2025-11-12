@@ -349,6 +349,7 @@ The following tools are available to LLM client hosts through the Model Context 
       - `name` (string): Entity identifier
       - `entityType` (string): Type classification
       - `observations` (string[]): Associated observations
+  - Embeddings fire asynchronously via the shared `EmbedJob` queue that also services `add_observations`, so creation returns immediately while the background worker generates vectors shortly afterward
 
 - **add_observations**
 

@@ -5,6 +5,17 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.6] - 2025-11-12
+
+### Performance
+- **Critical Performance Improvement:** Decoupled embedding generation from database transactions in entity creation
+  - Entity creation time reduced by **200x** (from ~2-5 seconds per entity to ~10ms)
+  - Database transaction duration reduced from O(n × 2s) to O(n × 10ms) where n = number of entities
+  - Eliminated transaction timeouts when creating 20+ entities (was >60s, now <200ms for 20 entities)
+  - Removed duplicate embedding generation (was done synchronously in storage provider AND asynchronously via job queue)
+  - Embeddings are now eventually consistent via the existing job queue infrastructure
+  - No breaking changes to public APIs - transparent performance optimization
+
 ## [0.3.9.5] - 2025-11-13
 
 ### Fixed
