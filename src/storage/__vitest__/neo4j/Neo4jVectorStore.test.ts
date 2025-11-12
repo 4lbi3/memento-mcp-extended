@@ -204,7 +204,7 @@ describe('Neo4jVectorStore', () => {
 
       const mockTx = session.beginTransaction();
       expect(mockTx.run).toHaveBeenCalledWith(
-        expect.stringContaining('MERGE (e:Entity {name: $id})'),
+        expect.stringContaining('MERGE (e:Entity {name: $id, validTo: NULL})'),
         expect.objectContaining({
           id: 'test-entity',
           vector: [0, 0, 0, 0],
@@ -213,7 +213,7 @@ describe('Neo4jVectorStore', () => {
 
       // Should also set metadata
       expect(mockTx.run).toHaveBeenCalledWith(
-        expect.stringContaining('SET e.metadata = $metadata'),
+        expect.stringContaining('WHERE e.validTo IS NULL'),
         expect.objectContaining({
           id: 'test-entity',
           metadata: JSON.stringify({ type: 'test' }),

@@ -108,13 +108,13 @@ This creates:
 
 ### Embedding Job Queue
 
-Every time you create an entity or add observations, Memento enqueues an `:EmbedJob` node inside Neo4j.  
-Each job is uniquely identified by `(entity_uid, model, version)`, so every entity version automatically gets a fresh embedding.  
+Every time you create an entity or add observations, Memento enqueues an `:EmbedJob` node inside Neo4j.
+Each job is uniquely identified by `(entity_uid, model, version)`, so every entity version automatically gets a fresh embedding.
 The MCP server runs a background worker (default every 10 seconds) that:
 
 - Leases pending jobs (`status: 'pending'`) with a short lock to avoid duplicates
 - Generates embeddings via the configured provider
-- Stores the vector back on the entity node
+- Stores the vector back on the current entity version (correctly handling temporal versioning with `validTo: NULL` filters)
 - Marks the job as `completed` (or `failed` with a retry counter)
 
 You can inspect the queue at any time:

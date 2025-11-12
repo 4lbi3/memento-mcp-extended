@@ -103,9 +103,9 @@ export class Neo4jVectorStore implements VectorStore {
 
       try {
         // Store embedding directly on the entity node
-        // If the entity exists, update it; otherwise, create it
+        // Only match the current version (validTo IS NULL) to avoid ambiguity with archived versions
         const query = `
-          MERGE (e:${this.entityNodeLabel} {name: $id})
+          MERGE (e:${this.entityNodeLabel} {name: $id, validTo: NULL})
           SET e.embedding = $vector
           RETURN e
         `;
@@ -119,6 +119,7 @@ export class Neo4jVectorStore implements VectorStore {
         if (metadata && Object.keys(metadata).length > 0) {
           const metadataQuery = `
             MATCH (e:${this.entityNodeLabel} {name: $id})
+            WHERE e.validTo IS NULL
             SET e.metadata = $metadata
             RETURN e
           `;
@@ -154,8 +155,10 @@ export class Neo4jVectorStore implements VectorStore {
       const session = await this.connectionManager.getSession();
 
       // Remove the embedding from the entity but keep the entity node
+      // Only match the current version (validTo IS NULL)
       const query = `
         MATCH (e:${this.entityNodeLabel} {name: $id})
+        WHERE e.validTo IS NULL
         REMOVE e.embedding
         REMOVE e.metadata
         RETURN e

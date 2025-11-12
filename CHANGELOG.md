@@ -5,6 +5,17 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.7] - 2025-11-12
+
+### Fixed
+- **Critical:** Fixed embedding generation failure after entity versioning
+  - `Neo4jVectorStore.addVector` now includes `validTo: NULL` filter to match only current entity versions
+  - `Neo4jVectorStore.removeVector` now includes `validTo: NULL` filter for consistency
+  - Metadata update operations now correctly target current entity versions only
+  - Prevents ambiguous MERGE failures when archived entity versions exist
+  - Ensures embeddings are properly stored on the latest entity version after `addObservations` or `deleteObservations`
+  - All embedding job operations now work correctly with the temporal versioning system
+
 ## [0.3.9.6] - 2025-11-12
 
 ### Performance
