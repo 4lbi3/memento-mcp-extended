@@ -409,11 +409,13 @@ export class Neo4jStorageProvider implements StorageProvider {
               changedBy: extendedRelation.changedBy || null,
             };
 
-            // Create relation
+            // Create relation with temporal validation
             await txc.run(
               `
               MATCH (from:Entity {name: $fromName})
+              WHERE from.validTo IS NULL
               MATCH (to:Entity {name: $toName})
+              WHERE to.validTo IS NULL
               CREATE (from)-[r:RELATES_TO {
                 id: $id,
                 relationType: $relationType,
@@ -752,10 +754,12 @@ export class Neo4jStorageProvider implements StorageProvider {
             const now = Date.now();
             const relationId = uuidv4();
 
-            // Check if entities exist
+            // Check if entities exist and are current
             const checkQuery = `
               MATCH (from:Entity {name: $fromName})
+              WHERE from.validTo IS NULL
               MATCH (to:Entity {name: $toName})
+              WHERE to.validTo IS NULL
               RETURN from, to
             `;
 
@@ -790,10 +794,12 @@ export class Neo4jStorageProvider implements StorageProvider {
               changedBy: extendedRelation.changedBy || null,
             };
 
-            // Create relation query
+            // Create relation query with temporal validation
             const createQuery = `
               MATCH (from:Entity {name: $fromName})
+              WHERE from.validTo IS NULL
               MATCH (to:Entity {name: $toName})
+              WHERE to.validTo IS NULL
               CREATE (from)-[r:RELATES_TO {
                 id: $id,
                 relationType: $relationType,
@@ -846,6 +852,192 @@ export class Neo4jStorageProvider implements StorageProvider {
   }
 
   /**
+   * Creates a new version of an entity with updated properties while maintaining
+   * relationship integrity. This is the central versioning logic used by both
+   * addObservations and deleteObservations.
+   *
+   * @param txc Active Neo4j transaction
+   * @param entityName Name of the entity to version
+   * @param newObservations New observations array for the entity
+   * @returns Object with entityName and success/failure indicators
+   */
+  private async _createNewEntityVersion(
+    txc: neo4j.Transaction,
+    entityName: string,
+    newObservations: string[]
+  ): Promise<{ entityName: string; success: boolean }> {
+    const now = Date.now();
+
+    // Step 1: Get current entity and ALL relationships (incoming + outgoing)
+    const getQuery = `
+      MATCH (e:Entity {name: $name})
+      WHERE e.validTo IS NULL
+      OPTIONAL MATCH (e)-[r:RELATES_TO]->(to:Entity)
+      WHERE r.validTo IS NULL
+      OPTIONAL MATCH (from:Entity)-[r2:RELATES_TO]->(e)
+      WHERE r2.validTo IS NULL
+      RETURN e,
+             collect(DISTINCT {rel: r, to: to}) as outgoing,
+             collect(DISTINCT {rel: r2, from: from}) as incoming
+    `;
+
+    const result = await txc.run(getQuery, { name: entityName });
+    if (result.records.length === 0) {
+      logger.warn(`Entity not found: ${entityName}`);
+      return { entityName, success: false };
+    }
+
+    const currentNode = result.records[0].get('e').properties;
+    const outgoingRels = result.records[0].get('outgoing');
+    const incomingRels = result.records[0].get('incoming');
+
+    // Step 2: Invalidate old entity and ALL relationships
+    const invalidateQuery = `
+      MATCH (e:Entity {id: $id})
+      SET e.validTo = $now
+      WITH e
+      OPTIONAL MATCH (e)-[r:RELATES_TO]->()
+      WHERE r.validTo IS NULL
+      SET r.validTo = $now
+      WITH e
+      OPTIONAL MATCH ()-[r2:RELATES_TO]->(e)
+      WHERE r2.validTo IS NULL
+      SET r2.validTo = $now
+    `;
+
+    await txc.run(invalidateQuery, { id: currentNode.id, now });
+
+    // Step 3: Create new entity version
+    const newEntityId = uuidv4();
+    const newVersion = (currentNode.version || 0) + 1;
+
+    const createQuery = `
+      CREATE (e:Entity {
+        id: $id,
+        name: $name,
+        entityType: $entityType,
+        observations: $observations,
+        version: $version,
+        createdAt: $createdAt,
+        updatedAt: $now,
+        validFrom: $now,
+        validTo: null,
+        changedBy: $changedBy
+      })
+      RETURN e
+    `;
+
+    await txc.run(createQuery, {
+      id: newEntityId,
+      name: currentNode.name,
+      entityType: currentNode.entityType,
+      observations: JSON.stringify(newObservations),
+      version: newVersion,
+      createdAt: currentNode.createdAt,
+      now,
+      changedBy: null,
+    });
+
+    // Step 4: Recreate outgoing relationships using current entity names (not stale IDs)
+    for (const outRel of outgoingRels) {
+      if (!outRel.rel || !outRel.to) continue;
+
+      const relProps = outRel.rel.properties;
+      const newRelId = uuidv4();
+
+      const createOutRelQuery = `
+        MATCH (from:Entity {id: $fromId})
+        WHERE from.validTo IS NULL
+        MATCH (to:Entity {name: $toName})
+        WHERE to.validTo IS NULL
+        CREATE (from)-[r:RELATES_TO {
+          id: $id,
+          relationType: $relationType,
+          strength: $strength,
+          confidence: $confidence,
+          metadata: $metadata,
+          version: $version,
+          createdAt: $createdAt,
+          updatedAt: $now,
+          validFrom: $now,
+          validTo: null,
+          changedBy: $changedBy
+        }]->(to)
+        RETURN r
+      `;
+
+      const result = await txc.run(createOutRelQuery, {
+        fromId: newEntityId,
+        toName: outRel.to.properties.name, // Use name, not stale ID
+        id: newRelId,
+        relationType: relProps.relationType,
+        strength: relProps.strength !== undefined ? relProps.strength : 0.9,
+        confidence: relProps.confidence !== undefined ? relProps.confidence : 0.95,
+        metadata: relProps.metadata || null,
+        version: (relProps.version || 0) + 1, // Increment version for temporal lineage
+        createdAt: relProps.createdAt || Date.now(),
+        now,
+        changedBy: null,
+      });
+
+      // Log warning if target entity no longer exists
+      if (result.records.length === 0) {
+        logger.warn(`Failed to recreate outgoing relationship to ${outRel.to.properties.name} - target entity not found in current state`);
+      }
+    }
+
+    // Step 5: Recreate incoming relationships using current entity names (not stale IDs)
+    for (const inRel of incomingRels) {
+      if (!inRel.rel || !inRel.from) continue;
+
+      const relProps = inRel.rel.properties;
+      const newRelId = uuidv4();
+
+      const createInRelQuery = `
+        MATCH (from:Entity {name: $fromName})
+        WHERE from.validTo IS NULL
+        MATCH (to:Entity {id: $toId})
+        WHERE to.validTo IS NULL
+        CREATE (from)-[r:RELATES_TO {
+          id: $id,
+          relationType: $relationType,
+          strength: $strength,
+          confidence: $confidence,
+          metadata: $metadata,
+          version: $version,
+          createdAt: $createdAt,
+          updatedAt: $now,
+          validFrom: $now,
+          validTo: null,
+          changedBy: $changedBy
+        }]->(to)
+        RETURN r
+      `;
+
+      const result = await txc.run(createInRelQuery, {
+        fromName: inRel.from.properties.name, // Use name, not stale ID
+        toId: newEntityId,
+        id: newRelId,
+        relationType: relProps.relationType,
+        strength: relProps.strength !== undefined ? relProps.strength : 0.9,
+        confidence: relProps.confidence !== undefined ? relProps.confidence : 0.95,
+        metadata: relProps.metadata || null,
+        version: (relProps.version || 0) + 1, // Increment version for temporal lineage
+        createdAt: relProps.createdAt || Date.now(),
+        now,
+        changedBy: null,
+      });
+
+      // Log warning if source entity no longer exists
+      if (result.records.length === 0) {
+        logger.warn(`Failed to recreate incoming relationship from ${inRel.from.properties.name} - source entity not found in current state`);
+      }
+    }
+
+    return { entityName, success: true };
+  }
+
+  /**
    * Add observations to entities
    * @param observations Array of objects with entity name and observation contents
    */
@@ -870,35 +1062,27 @@ export class Neo4jStorageProvider implements StorageProvider {
               continue;
             }
 
-            // Step 1: Get the current entity and its relationships
+            // Get current entity to calculate new observations
             const getQuery = `
               MATCH (e:Entity {name: $name})
               WHERE e.validTo IS NULL
-              OPTIONAL MATCH (e)-[r:RELATES_TO]->(to:Entity)
-              WHERE r.validTo IS NULL
-              OPTIONAL MATCH (from:Entity)-[r2:RELATES_TO]->(e)
-              WHERE r2.validTo IS NULL
-              RETURN e, collect(DISTINCT {rel: r, to: to}) as outgoing,
-                        collect(DISTINCT {rel: r2, from: from}) as incoming
+              RETURN e
             `;
 
             const getResult = await txc.run(getQuery, { name: obs.entityName });
 
             if (getResult.records.length === 0) {
               logger.warn(`Entity not found: ${obs.entityName}`);
+              // Still add result with empty addedObservations to maintain API contract
+              results.push({
+                entityName: obs.entityName,
+                addedObservations: [],
+              });
               continue;
             }
 
-            // Get entity properties
             const currentNode = getResult.records[0].get('e').properties;
             const currentObservations = JSON.parse(currentNode.observations || '[]');
-            const outgoingRels = getResult.records[0].get('outgoing');
-            const incomingRels = getResult.records[0].get('incoming');
-
-            // Step 2: Create a new version of the entity with updated observations
-            const now = Date.now();
-            const newVersion = (currentNode.version || 0) + 1;
-            const newEntityId = uuidv4();
 
             // Filter out duplicates
             const newObservations = obs.contents.filter(
@@ -917,139 +1101,27 @@ export class Neo4jStorageProvider implements StorageProvider {
             // Combine observations
             const allObservations = [...currentObservations, ...newObservations];
 
-            // Step 3: Mark the old entity and its relationships as invalid
-            const invalidateQuery = `
-              MATCH (e:Entity {id: $id})
-              SET e.validTo = $now
-              WITH e
-              OPTIONAL MATCH (e)-[r:RELATES_TO]->()
-              WHERE r.validTo IS NULL
-              SET r.validTo = $now
-              WITH e
-              OPTIONAL MATCH ()-[r2:RELATES_TO]->(e)
-              WHERE r2.validTo IS NULL
-              SET r2.validTo = $now
-            `;
+            // Delegate to shared versioning method
+            const versionResult = await this._createNewEntityVersion(
+              txc,
+              obs.entityName,
+              allObservations
+            );
 
-            await txc.run(invalidateQuery, {
-              id: currentNode.id,
-              now,
-            });
-
-            // Step 4: Create the new version
-            const createQuery = `
-              CREATE (e:Entity {
-                id: $id,
-                name: $name,
-                entityType: $entityType,
-                observations: $observations,
-                version: $version,
-                createdAt: $createdAt,
-                updatedAt: $now,
-                validFrom: $now,
-                validTo: null,
-                changedBy: $changedBy
-              })
-              RETURN e
-            `;
-
-            const createParams = {
-              id: newEntityId,
-              name: currentNode.name,
-              entityType: currentNode.entityType,
-              observations: JSON.stringify(allObservations),
-              version: newVersion,
-              createdAt: currentNode.createdAt,
-              now,
-              changedBy: null,
-            };
-
-            await txc.run(createQuery, createParams);
-
-            // Step 5: Recreate relationships for the new version
-            for (const outRel of outgoingRels) {
-              if (!outRel.rel || !outRel.to) continue;
-
-              const relProps = outRel.rel.properties;
-              const newRelId = uuidv4();
-
-              const createOutRelQuery = `
-                MATCH (from:Entity {id: $fromId})
-                MATCH (to:Entity {id: $toId})
-                CREATE (from)-[r:RELATES_TO {
-                  id: $id,
-                  relationType: $relationType,
-                  strength: $strength,
-                  confidence: $confidence,
-                  metadata: $metadata,
-                  version: $version,
-                  createdAt: $createdAt,
-                  updatedAt: $now,
-                  validFrom: $now,
-                  validTo: null,
-                  changedBy: $changedBy
-                }]->(to)
-              `;
-
-              await txc.run(createOutRelQuery, {
-                fromId: newEntityId,
-                toId: outRel.to.properties.id,
-                id: newRelId,
-                relationType: relProps.relationType,
-                strength: relProps.strength !== undefined ? relProps.strength : 0.9,
-                confidence: relProps.confidence !== undefined ? relProps.confidence : 0.95,
-                metadata: relProps.metadata || null,
-                version: relProps.version || 1,
-                createdAt: relProps.createdAt || Date.now(),
-                now,
-                changedBy: null,
+            if (versionResult.success) {
+              // Step 6: Add result to return array
+              results.push({
+                entityName: obs.entityName,
+                addedObservations: newObservations,
+              });
+            } else {
+              logger.warn(`Failed to version entity: ${obs.entityName}`);
+              // Still add result with empty addedObservations to maintain API contract
+              results.push({
+                entityName: obs.entityName,
+                addedObservations: [],
               });
             }
-
-            for (const inRel of incomingRels) {
-              if (!inRel.rel || !inRel.from) continue;
-
-              const relProps = inRel.rel.properties;
-              const newRelId = uuidv4();
-
-              const createInRelQuery = `
-                MATCH (from:Entity {id: $fromId})
-                MATCH (to:Entity {id: $toId})
-                CREATE (from)-[r:RELATES_TO {
-                  id: $id,
-                  relationType: $relationType,
-                  strength: $strength,
-                  confidence: $confidence,
-                  metadata: $metadata,
-                  version: $version,
-                  createdAt: $createdAt,
-                  updatedAt: $now,
-                  validFrom: $now,
-                  validTo: null,
-                  changedBy: $changedBy
-                }]->(to)
-              `;
-
-              await txc.run(createInRelQuery, {
-                fromId: inRel.from.properties.id,
-                toId: newEntityId,
-                id: newRelId,
-                relationType: relProps.relationType,
-                strength: relProps.strength !== undefined ? relProps.strength : 0.9,
-                confidence: relProps.confidence !== undefined ? relProps.confidence : 0.95,
-                metadata: relProps.metadata || null,
-                version: relProps.version || 1,
-                createdAt: relProps.createdAt || Date.now(),
-                now,
-                changedBy: null,
-              });
-            }
-
-            // Step 6: Add result to return array
-            results.push({
-              entityName: obs.entityName,
-              addedObservations: newObservations,
-            });
           }
 
           // Commit transaction
@@ -1142,7 +1214,7 @@ export class Neo4jStorageProvider implements StorageProvider {
               continue;
             }
 
-            // Step 1: Get the current entity
+            // Get current entity to calculate new observations
             const getQuery = `
               MATCH (e:Entity {name: $name})
               WHERE e.validTo IS NULL
@@ -1156,60 +1228,16 @@ export class Neo4jStorageProvider implements StorageProvider {
               continue;
             }
 
-            // Get entity properties
             const currentNode = getResult.records[0].get('e').properties;
             const currentObservations = JSON.parse(currentNode.observations || '[]');
 
-            // Step 2: Remove the observations
+            // Remove the observations
             const updatedObservations = currentObservations.filter(
               (obs: string) => !deletion.observations.includes(obs)
             );
 
-            // Step 3: Create a new version of the entity with updated observations
-            const now = Date.now();
-            const newVersion = (currentNode.version || 0) + 1;
-            const newEntityId = uuidv4();
-
-            // Step 4: Mark the old entity as invalid
-            const invalidateQuery = `
-              MATCH (e:Entity {id: $id})
-              SET e.validTo = $now
-            `;
-
-            await txc.run(invalidateQuery, {
-              id: currentNode.id,
-              now,
-            });
-
-            // Step 5: Create the new version
-            const createQuery = `
-              CREATE (e:Entity {
-                id: $id,
-                name: $name,
-                entityType: $entityType,
-                observations: $observations,
-                version: $version,
-                createdAt: $createdAt,
-                updatedAt: $now,
-                validFrom: $now,
-                validTo: null,
-                changedBy: $changedBy
-              })
-              RETURN e
-            `;
-
-            const createParams = {
-              id: newEntityId,
-              name: currentNode.name,
-              entityType: currentNode.entityType,
-              observations: JSON.stringify(updatedObservations),
-              version: newVersion,
-              createdAt: currentNode.createdAt,
-              now,
-              changedBy: null,
-            };
-
-            await txc.run(createQuery, createParams);
+            // Delegate to shared versioning method
+            await this._createNewEntityVersion(txc, deletion.entityName, updatedObservations);
           }
 
           // Commit transaction
@@ -1386,12 +1414,30 @@ export class Neo4jStorageProvider implements StorageProvider {
           // Get relation properties
           const currentRel = getResult.records[0].get('r').properties;
 
-          // Step 2: Update the relation with temporal versioning
+          // Step 2: Verify that both endpoint entities are still current
+          const entityCheckQuery = `
+            MATCH (from:Entity {name: $fromName})
+            WHERE from.validTo IS NULL
+            MATCH (to:Entity {name: $toName})
+            WHERE to.validTo IS NULL
+            RETURN from, to
+          `;
+
+          const entityCheckResult = await txc.run(entityCheckQuery, {
+            fromName: relation.from,
+            toName: relation.to,
+          });
+
+          if (entityCheckResult.records.length === 0) {
+            throw new Error(`Entity ${relation.from} or ${relation.to} not found in current state`);
+          }
+
+          // Step 3: Update the relation with temporal versioning
           const now = Date.now();
           const newVersion = (currentRel.version || 0) + 1;
           const newRelationId = uuidv4();
 
-          // Step 3: Mark the old relation as invalid
+          // Step 4: Mark the old relation as invalid
           const invalidateQuery = `
             MATCH (from:Entity {name: $fromName})-[r:RELATES_TO {id: $id}]->(to:Entity {name: $toName})
             SET r.validTo = $now
@@ -1404,10 +1450,12 @@ export class Neo4jStorageProvider implements StorageProvider {
             now,
           });
 
-          // Step 4: Create the new version of the relation
+          // Step 5: Create the new version of the relation with temporal validation
           const createQuery = `
             MATCH (from:Entity {name: $fromName})
+            WHERE from.validTo IS NULL
             MATCH (to:Entity {name: $toName})
+            WHERE to.validTo IS NULL
             CREATE (from)-[r:RELATES_TO {
               id: $id,
               relationType: $relationType,

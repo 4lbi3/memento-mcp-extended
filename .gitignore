@@ -106,3 +106,13 @@ copilot-instructions.md
 .prompts/
 .scripts/
 .cursorignore
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Agents
+AGENTS.md
+
+# openspec
+openspec/AGENTS.md
