@@ -612,8 +612,13 @@ export class Neo4jStorageProvider implements StorageProvider {
   }
 
   /**
-   * Create new entities in the knowledge graph
-   * @param entities Array of entities to create
+   * Creates or updates entities in the knowledge graph using intelligent upsert logic.
+   * For existing entities, merges new observations via temporal versioning.
+   * For new entities, creates them with full properties.
+   * Operations are idempotent - entities with identical observations are skipped.
+   *
+   * @param entities Array of entities to create or update
+   * @returns Array of entities that were created or modified
    * @note Embeddings are generated asynchronously via job queue after entity creation
    *       to avoid blocking database transactions with slow API calls
    */
@@ -634,52 +639,90 @@ export class Neo4jStorageProvider implements StorageProvider {
 
         try {
           for (const entity of entities) {
-            // Generate temporal and identity metadata
-            const now = Date.now();
-            const entityId = uuidv4();
-
-
-            // Create entity with parameters
-            const params = {
-              id: entityId,
-              name: entity.name,
-              entityType: entity.entityType,
-              observations: JSON.stringify(entity.observations || []),
-              version: 1,
-              createdAt: entity.createdAt || now,
-              updatedAt: entity.updatedAt || now,
-              validFrom: entity.validFrom || now,
-              validTo: null,
-              changedBy: entity.changedBy || null,
-            };
-
-            // Create entity query
-            const createQuery = `
-              CREATE (e:Entity {
-                id: $id,
-                name: $name,
-                entityType: $entityType,
-                observations: $observations,
-                version: $version,
-                createdAt: $createdAt,
-                updatedAt: $updatedAt,
-                validFrom: $validFrom,
-                validTo: $validTo,
-                changedBy: $changedBy
-              })
+            // Step 1: Check if entity already exists (query for current version only)
+            const existenceQuery = `
+              MATCH (e:Entity {name: $name, validTo: NULL})
               RETURN e
             `;
 
-            // Execute query
-            const result = await txc.run(createQuery, params);
+            const existenceResult = await txc.run(existenceQuery, { name: entity.name });
 
-            // Get created entity from result
-            if (result.records.length > 0) {
-              const node = result.records[0].get('e').properties;
-              const createdEntity = this.nodeToEntity(node);
-              createdEntities.push(createdEntity);
-              // Note: Embeddings are generated asynchronously via job queue after entity creation
-              logger.info(`Created entity: ${entity.name}`);
+            if (existenceResult.records.length > 0) {
+              // Step 2a: Entity exists - check if we need to merge observations
+              const existingNode = existenceResult.records[0].get('e').properties;
+              const currentObservations = JSON.parse(existingNode.observations || '[]');
+              const newObservations = entity.observations.filter(
+                (obs: string) => !currentObservations.includes(obs)
+              );
+
+              if (newObservations.length > 0) {
+                // Step 2b: New observations found - create new version with merged observations
+                const mergedObservations = [...currentObservations, ...newObservations];
+                const versionResult = await this._createNewEntityVersion(txc, entity.name, mergedObservations);
+
+                if (versionResult.success) {
+                  // Query for the updated entity within the same transaction
+                  const updatedQuery = `
+                    MATCH (e:Entity {name: $name, validTo: NULL})
+                    RETURN e
+                  `;
+                  const updatedResult = await txc.run(updatedQuery, { name: entity.name });
+
+                  if (updatedResult.records.length > 0) {
+                    const updatedNode = updatedResult.records[0].get('e').properties;
+                    const updatedEntity = this.nodeToEntity(updatedNode);
+                    createdEntities.push(updatedEntity);
+                    logger.debug(`Merged observations for existing entity: ${entity.name}`);
+                  }
+                }
+              } else {
+                // Step 2c: No new observations - idempotent operation, return existing entity
+                const existingEntity = this.nodeToEntity(existingNode);
+                createdEntities.push(existingEntity);
+                logger.debug(`Entity already exists with same observations: ${entity.name}`);
+              }
+            } else {
+              // Step 3: Entity doesn't exist - create new entity
+              const now = Date.now();
+              const entityId = uuidv4();
+
+              const params = {
+                id: entityId,
+                name: entity.name,
+                entityType: entity.entityType,
+                observations: JSON.stringify(entity.observations || []),
+                version: 1,
+                createdAt: entity.createdAt || now,
+                updatedAt: entity.updatedAt || now,
+                validFrom: entity.validFrom || now,
+                validTo: null,
+                changedBy: entity.changedBy || null,
+              };
+
+              const createQuery = `
+                CREATE (e:Entity {
+                  id: $id,
+                  name: $name,
+                  entityType: $entityType,
+                  observations: $observations,
+                  version: $version,
+                  createdAt: $createdAt,
+                  updatedAt: $updatedAt,
+                  validFrom: $validFrom,
+                  validTo: $validTo,
+                  changedBy: $changedBy
+                })
+                RETURN e
+              `;
+
+              const result = await txc.run(createQuery, params);
+
+              if (result.records.length > 0) {
+                const node = result.records[0].get('e').properties;
+                const createdEntity = this.nodeToEntity(node);
+                createdEntities.push(createdEntity);
+                logger.debug(`Created new entity: ${entity.name}`);
+              }
             }
           }
 

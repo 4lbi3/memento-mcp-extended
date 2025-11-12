@@ -79,6 +79,34 @@ describe('KnowledgeGraphManager with StorageProvider', () => {
     expect(mockProvider.createEntities).toHaveBeenCalledWith([newEntity]);
   });
 
+  it('should delegate createEntities without calling loadGraph', async () => {
+    const mockProvider: Partial<StorageProvider> = {
+      loadGraph: vi.fn(),
+      saveGraph: vi.fn(),
+      searchNodes: vi.fn(),
+      openNodes: vi.fn(),
+      createEntities: vi.fn().mockImplementation(async (entities: Entity[]) => entities),
+      createRelations: vi.fn(),
+      addObservations: vi.fn(),
+      deleteEntities: vi.fn(),
+      deleteObservations: vi.fn(),
+      deleteRelations: vi.fn(),
+    };
+
+    const manager = new KnowledgeGraphManager({ storageProvider: mockProvider as StorageProvider });
+    const inputEntities: Entity[] = [
+      { name: 'delegated-entity', entityType: 'test', observations: ['obs'] },
+    ];
+
+    const result = await manager.createEntities(inputEntities);
+
+    expect(mockProvider.createEntities).toHaveBeenCalledTimes(1);
+    expect(mockProvider.createEntities).toHaveBeenCalledWith(inputEntities);
+    expect(mockProvider.loadGraph).not.toHaveBeenCalled();
+    expect(mockProvider.saveGraph).not.toHaveBeenCalled();
+    expect(result).toEqual(inputEntities);
+  });
+
   it('should use StorageProvider searchNodes when searching', async () => {
     const mockSearchResult = {
       entities: [{ name: 'test', entityType: 'test', observations: [] }],

@@ -257,6 +257,169 @@ describe('Neo4j Temporal Integrity', () => {
     });
   });
 
+  describe('createEntities upsert behavior', () => {
+    it('creates a brand new entity when none exists', async () => {
+      const versionSpy = vi.spyOn(storageProvider as any, '_createNewEntityVersion');
+      const createQueries: Array<Record<string, unknown>> = [];
+
+      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
+        if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+          return { records: [] };
+        }
+
+        if (query.includes('CREATE (e:Entity')) {
+          createQueries.push(params);
+          return {
+            records: [
+              {
+                get: (key: string) => {
+                  if (key === 'e') {
+                    return {
+                      properties: {
+                        id: 'new-id',
+                        name: params.name,
+                        entityType: params.entityType,
+                        observations: params.observations,
+                        version: params.version,
+                        createdAt: params.createdAt,
+                        updatedAt: params.updatedAt,
+                        validFrom: params.validFrom,
+                        validTo: null,
+                        changedBy: params.changedBy ?? null,
+                      },
+                    };
+                  }
+                  return undefined;
+                },
+              },
+            ],
+          };
+        }
+
+        return { records: [] };
+      });
+
+      const entities = [{ name: 'FreshEntity', entityType: 'person', observations: ['fact1'] }];
+      const result = await storageProvider.createEntities(entities);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('FreshEntity');
+      expect(createQueries).toHaveLength(1);
+      expect(versionSpy).not.toHaveBeenCalled();
+      expect(mockTransaction.commit).toHaveBeenCalled();
+
+      versionSpy.mockRestore();
+    });
+
+    it('merges new observations into an existing entity', async () => {
+      const versionSpy = vi
+        .spyOn(storageProvider as any, '_createNewEntityVersion')
+        .mockResolvedValue({ entityName: 'MergedEntity', success: true });
+
+      let matchCalls = 0;
+      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
+        if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+          matchCalls += 1;
+          if (matchCalls === 1) {
+            return {
+              records: [
+                {
+                  get: () => ({
+                    properties: {
+                      id: 'existing-id',
+                      name: params.name,
+                      entityType: 'person',
+                      observations: JSON.stringify(['fact1']),
+                      version: 2,
+                      createdAt: 1,
+                      updatedAt: 1,
+                      validFrom: 1,
+                      validTo: null,
+                      changedBy: null,
+                    },
+                  }),
+                },
+              ],
+            };
+          }
+
+          return {
+            records: [
+              {
+                get: () => ({
+                  properties: {
+                    id: 'existing-id',
+                    name: params.name,
+                    entityType: 'person',
+                    observations: JSON.stringify(['fact1', 'fact2']),
+                    version: 3,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    validFrom: 2,
+                    validTo: null,
+                    changedBy: null,
+                  },
+                }),
+              },
+            ],
+          };
+        }
+
+        return { records: [] };
+      });
+
+      const entities = [{ name: 'MergedEntity', entityType: 'person', observations: ['fact2'] }];
+      const result = await storageProvider.createEntities(entities);
+
+      expect(versionSpy).toHaveBeenCalledTimes(1);
+      expect(versionSpy).toHaveBeenCalledWith(expect.anything(), 'MergedEntity', ['fact1', 'fact2']);
+      expect(result).toHaveLength(1);
+      expect(result[0].observations).toEqual(['fact1', 'fact2']);
+
+      versionSpy.mockRestore();
+    });
+
+    it('skips versioning when observations are identical (idempotent)', async () => {
+      const versionSpy = vi.spyOn(storageProvider as any, '_createNewEntityVersion');
+
+      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
+        if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+          return {
+            records: [
+              {
+                get: () => ({
+                  properties: {
+                    id: 'existing-id',
+                    name: params.name,
+                    entityType: 'person',
+                    observations: JSON.stringify(['fact1', 'fact2']),
+                    version: 5,
+                    createdAt: 10,
+                    updatedAt: 10,
+                    validFrom: 10,
+                    validTo: null,
+                    changedBy: null,
+                  },
+                }),
+              },
+            ],
+          };
+        }
+
+        return { records: [] };
+      });
+
+      const entities = [{ name: 'StableEntity', entityType: 'person', observations: ['fact1', 'fact2'] }];
+      const result = await storageProvider.createEntities(entities);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].observations).toEqual(['fact1', 'fact2']);
+      expect(versionSpy).not.toHaveBeenCalled();
+
+      versionSpy.mockRestore();
+    });
+  });
+
   describe('createRelations temporal validation', () => {
     it('matches only current entities before creating relationships', async () => {
       const relations: Relation[] = [{ from: 'EntityA', to: 'EntityB', relationType: 'KNOWS' }];

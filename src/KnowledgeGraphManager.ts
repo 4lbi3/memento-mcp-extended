@@ -376,70 +376,25 @@ export class KnowledgeGraphManager {
     }
   }
 
+  /**
+   * Creates entities in the knowledge graph, delegating deduplication to the storage provider.
+   * For existing entities, new observations are merged via temporal versioning.
+   * Requires a storage provider for proper deduplication behavior.
+   *
+   * @param entities Array of entities to create
+   * @returns Array of entities that were created (may be empty if all entities already existed)
+   * @throws Error if no storage provider is configured
+   */
   async createEntities(entities: Entity[]): Promise<Entity[]> {
-    // If no entities to create, load graph, save it unchanged and return empty array early
     if (!entities || entities.length === 0) {
-      if (!this.storageProvider) {
-        const graph = await this.loadGraph();
-        await this.saveGraph(graph);
-      }
-      return [];
-    }
-
-    // Filter entities to only include those we need to create
-    const graph = await this.loadGraph();
-    const entitiesMap = new Map<string, Entity>();
-
-    // Add existing entities to the map
-    for (const entity of graph.entities) {
-      entitiesMap.set(entity.name, entity);
-    }
-
-    // Process new entities
-    let entitiesArray = [...graph.entities];
-    const newEntities: Entity[] = [];
-
-    for (const entity of entities) {
-      // Check if entity already exists
-      if (entitiesMap.has(entity.name)) {
-        // Update existing entity by merging observations
-        const existingEntity = entitiesMap.get(entity.name)!;
-        const updatedObservations = new Set([
-          ...existingEntity.observations,
-          ...entity.observations,
-        ]);
-
-        existingEntity.observations = Array.from(updatedObservations);
-
-        // Update the entity in our map and array
-        entitiesMap.set(entity.name, existingEntity);
-        entitiesArray = entitiesArray.map((e) => (e.name === entity.name ? existingEntity : e));
-      } else {
-        // Add new entity
-        entitiesMap.set(entity.name, entity);
-        entitiesArray.push(entity);
-        newEntities.push(entity);
-      }
-    }
-
-    // Update the graph with our modified entities
-    graph.entities = entitiesArray;
-
-    // Save the graph regardless of whether we have new entities
-    if (!this.storageProvider) {
-      await this.saveGraph(graph);
-    }
-
-    // If no new entities, just return empty array
-    if (newEntities.length === 0) {
       return [];
     }
 
     let createdEntities: Entity[] = [];
 
     if (this.storageProvider) {
-      // Use storage provider for creating entities
-      createdEntities = await this.storageProvider.createEntities(newEntities);
+      // Delegate deduplication to storage provider (handles existence checks and observation merging)
+      createdEntities = await this.storageProvider.createEntities(entities);
 
       // Add entities with existing embeddings to vector store
       for (const entity of createdEntities) {
@@ -470,36 +425,8 @@ export class KnowledgeGraphManager {
         }
       }
     } else {
-      // No storage provider, so use the entities we've already added to the graph
-      // Add entities with existing embeddings to vector store
-      for (const entity of newEntities) {
-        if (entity.embedding && entity.embedding.vector) {
-          try {
-            const vectorStore = await this.ensureVectorStore().catch(() => undefined);
-            if (vectorStore) {
-              // Add metadata for filtering
-              const metadata = {
-                name: entity.name,
-                entityType: entity.entityType,
-              };
-
-              await vectorStore.addVector(entity.name, entity.embedding.vector, metadata);
-              logger.debug(`Added vector for entity ${entity.name} to vector store`);
-            }
-          } catch (error) {
-            logger.error(`Failed to add vector for entity ${entity.name} to vector store`, error);
-            // Continue with scheduling embedding job
-          }
-        }
-      }
-
-      if (this.embeddingJobManager) {
-        for (const entity of newEntities) {
-          await this.embeddingJobManager.scheduleEntityEmbedding(entity.name, 1);
-        }
-      }
-
-      createdEntities = newEntities;
+      // Fallback when no storage provider is configured (legacy behavior)
+      throw new Error('Storage provider is required for entity creation with deduplication');
     }
 
     return createdEntities;
