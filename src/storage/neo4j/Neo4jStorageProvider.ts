@@ -1868,24 +1868,37 @@ export class Neo4jStorageProvider implements StorageProvider {
         logger.debug(`Neo4jStorageProvider: Direct vector search found ${foundResults} results`);
 
         if (foundResults > 0) {
-          // Convert to entity objects
-          const entityPromises = result.records.map(async (record) => {
-            const entityName = record.get('name');
-            const score = record.get('score');
-            const entity = await this.getEntity(entityName);
-            if (entity) {
-              return {
-                ...entity,
-                score,
-              };
-            }
-            return null;
+          // Extract entity names and scores from vector search results
+          const resultMap = new Map<string, number>();
+          result.records.forEach((record) => {
+            resultMap.set(record.get('name'), record.get('score'));
+          });
+          const entityNames = Array.from(resultMap.keys());
+
+          // Batch fetch all entities in a single query to avoid N+1 problem
+          const batchQuery = `
+            MATCH (e:Entity)
+            WHERE e.name IN $entityNames AND e.validTo IS NULL
+            RETURN e
+          `;
+          const batchResult = await session.run(batchQuery, { entityNames });
+
+          // Convert nodes to entities and attach scores
+          const entities = batchResult.records.map((record) => {
+            const node = record.get('e').properties;
+            const entity = this.nodeToEntity(node);
+            const score = resultMap.get(entity.name);
+            return {
+              ...entity,
+              score,
+            };
           });
 
-          const entities = (await Promise.all(entityPromises)).filter(Boolean);
-
-          // Return only valid entities
-          return entities.filter((entity) => entity && entity.validTo === null).slice(0, limit);
+          // Return entities sorted by score descending
+          return entities
+            .filter((entity) => entity.score !== undefined)
+            .sort((a, b) => (b.score || 0) - (a.score || 0))
+            .slice(0, limit);
         }
 
         logger.debug('Neo4jStorageProvider: No results from vector search');
@@ -2078,13 +2091,22 @@ export class Neo4jStorageProvider implements StorageProvider {
             );
 
             if (foundResults > 0) {
-              // Convert to EntityData objects
-              const entityPromises = vectorResult.records.map(async (record) => {
-                const entityName = record.get('name');
-                return this.getEntity(entityName);
-              });
+              // Extract entity names from vector search results
+              const foundEntityNames = vectorResult.records.map((record) => record.get('name'));
 
-              const entities = (await Promise.all(entityPromises)).filter(Boolean);
+              // Batch fetch all entities in a single query to avoid N+1 problem
+              const batchQuery = `
+                MATCH (e:Entity)
+                WHERE e.name IN $entityNames AND e.validTo IS NULL
+                RETURN e
+              `;
+              const batchResult = await session.run(batchQuery, { entityNames: foundEntityNames });
+
+              // Convert nodes to entities
+              const entities = batchResult.records.map((record) => {
+                const node = record.get('e').properties;
+                return this.nodeToEntity(node);
+              });
 
               diagnostics.stepsTaken.push({
                 step: 'vectorSearch',
