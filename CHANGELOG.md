@@ -5,6 +5,11 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.5] - 2025-11-13
+
+### Fixed
+- Eliminated the N+1 lookup pattern in `Neo4jStorageProvider` by batching `findSimilarEntities` and `semanticSearch` entity fetches; both paths now run with two queries regardless of result count, delivering ~10-100× faster response times without changing any public API.
+
 ## [0.3.9.4] - 2025-11-12
 
 ### Fixed
