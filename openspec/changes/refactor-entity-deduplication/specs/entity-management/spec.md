@@ -6,19 +6,29 @@
 
 The storage provider SHALL perform entity deduplication at the database level using atomic operations, eliminating the need for the application layer to load existing entities into memory.
 
-#### Scenario: Create duplicate entity with MERGE
-- **GIVEN** an entity with name "Alice" exists in the database
-- **WHEN** `createEntities([{name: "Alice", entityType: "person", observations: ["new fact"]}])` is called
-- **THEN** the storage provider SHALL use a database-level MERGE operation
-- **AND** no new entity node SHALL be created
-- **AND** the existing entity MAY be updated with merged observations (implementation-specific)
+#### Scenario: Create duplicate entity with new observations
+- **GIVEN** an entity with name "Alice" and observations ["fact1", "fact2"] exists in the database
+- **WHEN** `createEntities([{name: "Alice", entityType: "person", observations: ["fact2", "fact3"]}])` is called
+- **THEN** the storage provider SHALL query for the existing entity using indexed lookup
+- **AND** the storage provider SHALL identify "fact3" as a new observation (fact2 already exists)
+- **AND** the storage provider SHALL create a new temporal version with merged observations ["fact1", "fact2", "fact3"]
+- **AND** the old version SHALL be marked as invalid (validTo set to current timestamp)
 - **AND** the operation SHALL complete without loading the entire graph into memory
 
-#### Scenario: Create new entity with MERGE
-- **GIVEN** no entity with name "Bob" exists in the database
-- **WHEN** `createEntities([{name: "Bob", entityType: "person", observations: ["fact"]}])` is called
-- **THEN** the storage provider SHALL use a database-level MERGE operation
+#### Scenario: Create duplicate entity with no new observations
+- **GIVEN** an entity with name "Bob" and observations ["fact1", "fact2"] exists
+- **WHEN** `createEntities([{name: "Bob", entityType: "person", observations: ["fact1"]}])` is called
+- **THEN** the storage provider SHALL query for the existing entity
+- **AND** the storage provider SHALL detect that no new observations are present
+- **AND** no new temporal version SHALL be created (idempotent operation)
+- **AND** the operation SHALL return successfully
+
+#### Scenario: Create new entity
+- **GIVEN** no entity with name "Charlie" exists in the database
+- **WHEN** `createEntities([{name: "Charlie", entityType: "person", observations: ["fact1"]}])` is called
+- **THEN** the storage provider SHALL query for the entity and find it doesn't exist
 - **AND** a new entity node SHALL be created with the provided attributes
+- **AND** the entity SHALL be assigned version 1 and appropriate timestamps
 - **AND** the operation SHALL complete without loading the entire graph into memory
 
 #### Scenario: Scalability with large graphs
@@ -47,30 +57,31 @@ The `KnowledgeGraphManager` SHALL delegate all entity deduplication logic to the
 
 ## MODIFIED Requirements
 
-### Requirement: Neo4j Entity Creation with Temporal Versioning
+### Requirement: Neo4j Entity Creation with Intelligent Upsert
 
-The Neo4j storage provider SHALL create entities using `MERGE` operations to ensure uniqueness based on the combination of entity name and `validTo IS NULL`, maintaining the temporal versioning model while preventing duplicate current-version entities.
+The Neo4j storage provider SHALL implement an intelligent upsert pattern that checks for existing entities, creates new ones when they don't exist, and merges observations into existing entities through temporal versioning.
 
-#### Scenario: MERGE on entity name with temporal constraint
+#### Scenario: Upsert query pattern for each entity
 - **GIVEN** the Neo4j storage provider is active
 - **WHEN** `createEntities([entity])` is called
-- **THEN** the provider SHALL execute a Cypher query with `MERGE (e:Entity {name: $name, validTo: NULL})`
-- **AND** the `ON CREATE SET` clause SHALL initialize all entity properties (id, entityType, observations, version, timestamps)
-- **AND** if the entity already exists, no duplicate SHALL be created
-- **AND** the operation SHALL occur within a transaction
+- **THEN** the provider SHALL execute a query to check if entity exists: `MATCH (e:Entity {name: $name, validTo: NULL}) RETURN e`
+- **AND** if the entity doesn't exist, execute CREATE query with all properties
+- **AND** if the entity exists, compare observations and merge via `_createNewEntityVersion` if new observations found
+- **AND** all operations SHALL occur within a single transaction
 
-#### Scenario: Batch entity creation with MERGE
+#### Scenario: Batch entity creation with upsert
 - **GIVEN** multiple entities are provided for creation
 - **WHEN** `createEntities([entity1, entity2, entity3])` is called
-- **THEN** each entity SHALL be processed with individual MERGE queries
-- **AND** all MERGE operations SHALL occur within a single transaction
-- **AND** if any entity creation fails, all SHALL be rolled back
+- **THEN** each entity SHALL be processed with the upsert pattern (check existence, then create or merge)
+- **AND** all operations SHALL occur within a single transaction
+- **AND** if any operation fails, all SHALL be rolled back
 - **AND** the transaction SHALL commit only after all entities are processed
 
-#### Scenario: Temporal versioning preservation
+#### Scenario: Temporal versioning preservation with archived versions
 - **GIVEN** an entity "Alice" with version 1 and `validTo = 1234567890` exists (archived)
 - **AND** an entity "Alice" with version 2 and `validTo IS NULL` exists (current)
-- **WHEN** `createEntities([{name: "Alice", ...}])` is called
-- **THEN** the MERGE operation SHALL match only the current version (`validTo IS NULL`)
+- **WHEN** `createEntities([{name: "Alice", observations: ["new fact"]}])` is called
+- **THEN** the existence check SHALL match only the current version (`validTo IS NULL`)
 - **AND** archived versions SHALL remain unchanged
-- **AND** no duplicate current entity SHALL be created
+- **AND** a new version 3 SHALL be created with merged observations
+- **AND** version 2 SHALL be marked as invalid (validTo set to current timestamp)
