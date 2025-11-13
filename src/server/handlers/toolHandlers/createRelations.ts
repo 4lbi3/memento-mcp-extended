@@ -1,3 +1,5 @@
+import type { KnowledgeGraphManager, Relation } from '../../../KnowledgeGraphManager.js';
+
 /**
  * Handles the create_relations tool request
  * @param args The arguments for the tool request
@@ -7,10 +9,9 @@
 
 export async function handleCreateRelations(
   args: Record<string, unknown>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  knowledgeGraphManager: any
+  knowledgeGraphManager: KnowledgeGraphManager
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const result = await knowledgeGraphManager.createRelations(args.relations);
+  const result = await knowledgeGraphManager.createRelations(args.relations as Relation[]);
   return {
     content: [
       {

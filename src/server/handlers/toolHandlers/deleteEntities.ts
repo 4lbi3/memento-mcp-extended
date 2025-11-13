@@ -1,3 +1,5 @@
+import type { KnowledgeGraphManager } from '../../../KnowledgeGraphManager.js';
+
 /**
  * Handles the delete_entities tool request
  * @param args The arguments for the tool request
@@ -7,10 +9,9 @@
 
 export async function handleDeleteEntities(
   args: Record<string, unknown>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  knowledgeGraphManager: any
+  knowledgeGraphManager: KnowledgeGraphManager
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  await knowledgeGraphManager.deleteEntities(args.entityNames);
+  await knowledgeGraphManager.deleteEntities(args.entityNames as string[]);
   return {
     content: [
       {

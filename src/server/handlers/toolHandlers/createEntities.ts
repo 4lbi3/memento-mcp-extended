@@ -1,3 +1,5 @@
+import type { KnowledgeGraphManager, Entity } from '../../../KnowledgeGraphManager.js';
+
 /**
  * Handles the create_entities tool request
  * @param args The arguments for the tool request
@@ -7,10 +9,9 @@
 
 export async function handleCreateEntities(
   args: Record<string, unknown>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  knowledgeGraphManager: any
+  knowledgeGraphManager: KnowledgeGraphManager
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const result = await knowledgeGraphManager.createEntities(args.entities);
+  const result = await knowledgeGraphManager.createEntities(args.entities as Entity[]);
   return {
     content: [
       {

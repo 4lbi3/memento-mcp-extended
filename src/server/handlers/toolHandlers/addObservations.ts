@@ -1,3 +1,5 @@
+import type { KnowledgeGraphManager } from '../../../KnowledgeGraphManager.js';
+
 /**
  * Handles the add_observations tool request
  * @param args The arguments for the tool request
@@ -7,8 +9,7 @@
 
 export async function handleAddObservations(
   args: Record<string, unknown>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  knowledgeGraphManager: any
+  knowledgeGraphManager: KnowledgeGraphManager
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
     // Enhanced logging for debugging
