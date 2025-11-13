@@ -72,6 +72,20 @@ The Neo4j provider now enforces strict temporal validation across all relationsh
 
 Together, these safeguards eliminate temporal corruption and keep the graph consistent under heavy versioning workloads.
 
+### Database-Level Deduplication
+
+- `KnowledgeGraphManager.createEntities` now streams every batch straight to the storage provider—no intermediate `loadGraph()` or in-memory entity map—so memory usage remains flat regardless of how large the existing graph is.
+- `Neo4jStorageProvider.createEntities` performs an indexed upsert (`MATCH (e:Entity {name: $name, validTo: NULL})`) for each entity, merging new observations with `_createNewEntityVersion` and logging whether it created, merged, or skipped a node.
+- The spec-critical scenarios (new entity, duplicate with new observations, duplicate with identical observations) are validated in `Neo4jTemporalIntegrity.test.ts` to prevent regressions.
+- A standalone benchmark script is available to verify constant-memory behaviour at scale:
+
+  ```bash
+  # Uses values from .env (custom Bolt/HTTP ports, credentials, etc.)
+  node --expose-gc --loader ts-node/esm scripts/benchmark-create-entities.ts
+  ```
+
+  On the reference environment, two sequential batches of 10,000 entities completed in **5.41 s** and **4.55 s**, with resident-set deltas of **+126 MB** and **−29 MB**, confirming O(1) memory usage.
+
 ### Query Performance
 
 - Lookup-heavy paths like `findSimilarEntities` and `semanticSearch` now fetch candidate entities via a single batched query (instead of per-entity round trips), so the provider always executes just two queries regardless of result size and scales ≈10-100× faster for larger result sets.
@@ -695,6 +709,7 @@ You have access to the Memento MCP knowledge graph memory system, which provides
 Your memory tools are provided by Memento MCP, a sophisticated knowledge graph implementation.
 When asked about past conversations or user information, always check the Memento MCP knowledge graph first.
 You should use semantic_search to find relevant information in your memory when answering questions.
+Store information in the same language as the user.
 ```
 
 ### Testing Semantic Search

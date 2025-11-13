@@ -5,6 +5,19 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.8] - 2025-11-12
+
+### Changed
+- `KnowledgeGraphManager.createEntities` now delegates deduplication entirely to the storage provider, avoiding `loadGraph()` and in-memory entity maps.
+- `Neo4jStorageProvider.createEntities` implements an indexed upsert workflow with temporal versioning merges, emitting debug logs for create/merge/skip paths.
+
+### Performance
+- Resolved the O(n) memory spike during entity creation by moving deduplication to Neo4j; memory usage remains constant regardless of existing graph size.
+- Added `scripts/benchmark-create-entities.ts` to measure end-to-end performance. On a local Neo4j instance, two sequential batches of 10,000 entities completed in **5.41s** and **4.55s** respectively with RSS deltas of **+126 MB** and **-29 MB**, confirming flat memory utilisation across batches.
+
+### Fixed
+- Covered the new upsert semantics with unit tests in `Neo4jTemporalIntegrity.test.ts`, ensuring new entity, merge, and idempotent scenarios all respect `_createNewEntityVersion` contracts.
+
 ## [0.3.9.7] - 2025-11-12
 
 ### Fixed
@@ -27,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Embeddings are now eventually consistent via the existing job queue infrastructure
   - No breaking changes to public APIs - transparent performance optimization
 
-## [0.3.9.5] - 2025-11-13
+## [0.3.9.5] - 2025-11-12
 
 ### Fixed
 - Eliminated the N+1 lookup pattern in `Neo4jStorageProvider` by batching `findSimilarEntities` and `semanticSearch` entity fetches; both paths now run with two queries regardless of result count, delivering ~10-100× faster response times without changing any public API.
