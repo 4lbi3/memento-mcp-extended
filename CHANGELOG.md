@@ -5,6 +5,12 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.13]
+
+### Changed
+- Standardised Neo4j relation conversions so optional `strength`/`confidence` fields now preserve `null` values end-to-end, matching entity handling and Neo4j’s JSON semantics.
+- Updated the `Relation` interface and validators to accept `null` as the canonical “unset” value for optional numeric fields and expanded the unit tests accordingly.
+
 ## [0.3.9.12]
 
 ### Changed

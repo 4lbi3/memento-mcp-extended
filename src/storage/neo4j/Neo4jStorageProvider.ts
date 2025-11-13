@@ -277,15 +277,16 @@ export class Neo4jStorageProvider implements StorageProvider {
       }
     }
 
+    const strength = rel.strength as number | null | undefined;
+    const confidence = rel.confidence as number | null | undefined;
+
     // Create a standard Relation object with proper type handling
     return {
       from: fromNode,
       to: toNode,
       relationType: rel.relationType as string,
-      // Convert null to undefined for compatibility with Relation interface
-      strength: (rel.strength as number | null) === null ? undefined : (rel.strength as number),
-      confidence:
-        (rel.confidence as number | null) === null ? undefined : (rel.confidence as number),
+      strength: strength ?? null,
+      confidence: confidence ?? null,
       metadata,
     };
   }
@@ -408,8 +409,8 @@ export class Neo4jStorageProvider implements StorageProvider {
               fromName: relation.from,
               toName: relation.to,
               relationType: relation.relationType,
-              strength: relation.strength || null,
-              confidence: relation.confidence || null,
+              strength: relation.strength ?? null,
+              confidence: relation.confidence ?? null,
               metadata: relation.metadata ? JSON.stringify(relation.metadata) : null,
               version: extendedRelation.version || 1,
               createdAt: extendedRelation.createdAt || Date.now(),
@@ -807,8 +808,8 @@ export class Neo4jStorageProvider implements StorageProvider {
               fromName: relation.from,
               toName: relation.to,
               relationType: relation.relationType,
-              strength: relation.strength || null,
-              confidence: relation.confidence || null,
+              strength: relation.strength ?? null,
+              confidence: relation.confidence ?? null,
               metadata: relation.metadata ? JSON.stringify(relation.metadata) : null,
               version: 1,
               createdAt: extendedRelation.createdAt || now,

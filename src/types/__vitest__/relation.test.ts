@@ -151,6 +151,20 @@ describe('Relation Interface', () => {
         })
       ).toBe(false); // 'metadata' not object
     });
+
+    it('should treat null optional numeric fields as unset', () => {
+      const relationWithNulls = {
+        from: 'entityA',
+        to: 'entityB',
+        relationType: 'knows',
+        strength: null,
+        confidence: null,
+      };
+
+      expect(Relation.isRelation(relationWithNulls)).toBe(true);
+      expect(Relation.hasStrength(relationWithNulls)).toBe(false);
+      expect(Relation.hasConfidence(relationWithNulls)).toBe(false);
+    });
   });
 
   // Additional tests to cover edge cases for hasStrength

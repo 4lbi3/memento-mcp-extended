@@ -46,14 +46,14 @@ export interface Relation {
    * Optional strength of the relationship (0.0-1.0)
    * Higher values indicate stronger relationships
    */
-  strength?: number;
+  strength?: number | null;
 
   /**
    * Optional confidence score (0.0-1.0)
    * Represents how confident the system is about this relationship
    * Particularly useful for inferred relations
    */
-  confidence?: number;
+  confidence?: number | null;
 
   /**
    * Optional metadata providing additional context about the relation
@@ -98,8 +98,12 @@ export class RelationValidator {
       typeof obj.from === 'string' &&
       typeof obj.to === 'string' &&
       typeof obj.relationType === 'string' &&
-      (obj.strength === undefined || typeof obj.strength === 'number') &&
-      (obj.confidence === undefined || typeof obj.confidence === 'number') &&
+      (obj.strength === undefined ||
+        obj.strength === null ||
+        typeof obj.strength === 'number') &&
+      (obj.confidence === undefined ||
+        obj.confidence === null ||
+        typeof obj.confidence === 'number') &&
       (obj.metadata === undefined || typeof obj.metadata === 'object')
     );
   }
