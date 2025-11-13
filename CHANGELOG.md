@@ -5,6 +5,17 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.10] - 2025-11-13
+
+### Changed
+- **Code Refactoring:** Eliminated code duplication in vector search logic between `semanticSearch` and `findSimilarEntities`
+  - `semanticSearch` now delegates the core vector search operations to `findSimilarEntities` instead of duplicating the query logic
+  - Removed ~120 lines of duplicate vector search code (lines 2089-2209) from `semanticSearch`
+  - Both methods now share a single, centralized implementation of the Neo4j vector query and batch entity retrieval
+  - Maintains all existing functionality: diagnostics tracking, filtering, relation loading, and text search fallback
+  - Reduces maintenance burden and prevents future regression of the N+1 query fix (from version 0.3.9.5)
+  - No breaking changes - all existing tests pass without modification
+
 ## [0.3.9.9] - 2025-11-13
 
 ### Fixed

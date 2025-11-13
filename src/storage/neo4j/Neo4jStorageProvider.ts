@@ -2083,136 +2083,18 @@ export class Neo4jStorageProvider implements StorageProvider {
           minSimilarity,
         });
 
-        // DIRECT VECTOR SEARCH IMPLEMENTATION
-        // Instead of using findSimilarEntities - which isn't working in the MCP context
-        // we'll directly use the working technique from our test script
-        try {
-          const session = await this.connectionManager.getSession();
-
-          try {
-            const vectorResult = await session.run(
-              `
-              CALL db.index.vector.queryNodes(
-                'entity_embeddings',
-                $limit,
-                $embedding
-              )
-              YIELD node, score
-              WHERE score >= $minScore
-              RETURN node.name AS name, node.entityType AS entityType, score
-              ORDER BY score DESC
-            `,
-              {
-                limit: neo4j.int(searchLimit),
-                embedding: options.queryVector,
-                minScore: minSimilarity,
-              }
-            );
-
-            const foundResults = vectorResult.records.length;
-            logger.debug(
-              `Neo4jStorageProvider: Direct vector search found ${foundResults} results`
-            );
-
-            if (foundResults > 0) {
-              // Extract entity names from vector search results
-              const foundEntityNames = vectorResult.records.map((record) => record.get('name'));
-
-              // Batch fetch all entities in a single query to avoid N+1 problem
-              const batchQuery = `
-                MATCH (e:Entity)
-                WHERE e.name IN $entityNames AND e.validTo IS NULL
-                RETURN e
-              `;
-              const batchResult = await session.run(batchQuery, { entityNames: foundEntityNames });
-
-              // Convert nodes to entities
-              const entities = batchResult.records.map((record) => {
-                const node = record.get('e').properties;
-                return this.nodeToEntity(node);
-              });
-
-              diagnostics.stepsTaken.push({
-                step: 'vectorSearch',
-                timestamp: Date.now(),
-                status: 'completed',
-                resultsCount: entities.length,
-              });
-
-              // If no entities found after filtering, return empty result
-              if (entities.length === 0) {
-                diagnostics.endTime = Date.now();
-                diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-                // Only include diagnostics if DEBUG is enabled
-                const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
-                if (process.env.DEBUG === 'true') {
-                  result.diagnostics = diagnostics;
-                }
-
-                return result;
-              }
-
-              // Get related relations
-              const entityNames = entities.map((e) => e.name);
-              const finalGraph = await this.openNodes(entityNames);
-
-              diagnostics.endTime = Date.now();
-              diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-              // Only include diagnostics if DEBUG is enabled
-              if (process.env.DEBUG === 'true') {
-                return {
-                  ...finalGraph,
-                  diagnostics,
-                };
-              }
-
-              return finalGraph;
-            } else {
-              // No results from vector search
-              diagnostics.stepsTaken.push({
-                step: 'vectorSearch',
-                timestamp: Date.now(),
-                status: 'completed',
-                resultsCount: 0,
-              });
-
-              diagnostics.endTime = Date.now();
-              diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
-
-              // Only include diagnostics if DEBUG is enabled
-              const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
-              if (process.env.DEBUG === 'true') {
-                result.diagnostics = diagnostics;
-              }
-
-              return result;
-            }
-          } catch (error) {
-            logger.error(
-              `Neo4jStorageProvider: Direct vector search error: ${error instanceof Error ? error.message : String(error)}`
-            );
-            diagnostics.stepsTaken.push({
-              step: 'vectorSearch',
-              timestamp: Date.now(),
-              status: 'error',
-              error: error instanceof Error ? error.message : String(error),
-            });
-          } finally {
-            await session.close();
-          }
-        } catch (error) {
-          logger.error(
-            `Neo4jStorageProvider: Direct vector search session error: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-
-        // If we get here, the direct approach failed, fall back to original implementation
+        // Use findSimilarEntities for the vector search logic (centralized implementation)
         const results = await this.findSimilarEntities(
           options.queryVector,
-          searchLimit * 2 // findSimilarEntities will handle neo4j.int conversion
+          searchLimit * 2 // Get more results for filtering
         );
+
+        diagnostics.stepsTaken.push({
+          step: 'vectorSearch',
+          timestamp: Date.now(),
+          status: 'completed',
+          resultsCount: results.length,
+        });
 
         // Filter by min similarity and entity types
         const filteredResults = results
