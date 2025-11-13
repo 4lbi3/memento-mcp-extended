@@ -3,7 +3,7 @@ import { fs } from './utils/fs.js';
 import type { StorageProvider } from './storage/StorageProvider.js';
 import type { Relation } from './types/relation.js';
 import type { EntityEmbedding } from './types/entity-embedding.js';
-import type { EmbeddingJobManager } from './embeddings/EmbeddingJobManager.js';
+import type { Neo4jEmbeddingJobManager } from './embeddings/Neo4jEmbeddingJobManager.js';
 import type { VectorStore } from './types/vector-store.js';
 import {
   VectorStoreFactory,
@@ -107,7 +107,7 @@ export interface SearchResponse {
 interface KnowledgeGraphManagerOptions {
   storageProvider?: StorageProvider;
   memoryFilePath?: string;
-  embeddingJobManager?: EmbeddingJobManager;
+  embeddingJobManager?: Neo4jEmbeddingJobManager;
   vectorStoreOptions?: VectorStoreFactoryOptions;
 }
 
@@ -115,7 +115,7 @@ interface KnowledgeGraphManagerOptions {
 export class KnowledgeGraphManager {
   private memoryFilePath: string = '';
   private storageProvider?: StorageProvider;
-  private embeddingJobManager?: EmbeddingJobManager;
+  private embeddingJobManager?: Neo4jEmbeddingJobManager;
   private vectorStore?: VectorStore;
   // Expose the fs module for testing
   protected fsModule = fs;

@@ -4,7 +4,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { KnowledgeGraphManager } from './KnowledgeGraphManager.js';
 import { initializeStorageProvider } from './config/storage.js';
 import { setupServer } from './server/setup.js';
-import { EmbeddingJobManager } from './embeddings/EmbeddingJobManager.js';
 import { EmbeddingServiceFactory } from './embeddings/EmbeddingServiceFactory.js';
 import { Neo4jJobStore } from './storage/neo4j/Neo4jJobStore.js';
 import { Neo4jEmbeddingJobManager } from './embeddings/Neo4jEmbeddingJobManager.js';
@@ -48,7 +47,7 @@ try {
 }
 
 // Initialize embedding job manager only if storage provider supports it
-let embeddingJobManager: EmbeddingJobManager | undefined = undefined;
+let embeddingJobManager: Neo4jEmbeddingJobManager | undefined = undefined;
 try {
   // Force debug logging to help troubleshoot
   logger.debug(`OpenAI API key exists: ${!!process.env.OPENAI_API_KEY}`);
@@ -78,10 +77,10 @@ try {
       : 60 * 1000, // Default: 1 minute
   };
 
-  logger.info('Initializing EmbeddingJobManager', {
+  logger.info('Initializing Neo4jEmbeddingJobManager', {
     rateLimiterOptions,
     model: embeddingService.getModelInfo().name,
-    storageType: process.env.MEMORY_STORAGE_TYPE || 'neo4j',
+    storageType: 'neo4j',
   });
 
   // For Neo4j (which is always the storage provider)
@@ -152,7 +151,7 @@ try {
     rateLimiterOptions,
     null, // Use default cache options
     logger
-  ) as any; // Cast to match EmbeddingJobManager interface
+  );
 
   // Schedule periodic processing for embedding jobs
   const EMBEDDING_PROCESS_INTERVAL = 10000; // 10 seconds - more frequent processing
@@ -192,7 +191,7 @@ try {
   }, CLEANUP_INTERVAL);
 } catch (error) {
   // Fail gracefully if embedding job manager initialization fails
-  logger.error('Failed to initialize EmbeddingJobManager', {
+  logger.error('Failed to initialize Neo4jEmbeddingJobManager', {
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined,
   });

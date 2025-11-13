@@ -17,9 +17,10 @@ type StorageProviderDiagnostics = {
   embeddingService?: EmbeddingServiceDiagnostics;
 };
 
-type KnowledgeGraphManagerDiagnostics = KnowledgeGraphManager & {
+type KnowledgeGraphManagerDiagnostics = {
   storageProvider?: StorageProviderDiagnostics;
   embeddingJobManager?: EmbeddingJobManagerDiagnostics;
+  [key: string]: unknown;
 };
 
 export type DebugEmbeddingConfigInfo = {
@@ -56,7 +57,7 @@ export type DebugEmbeddingConfigInfo = {
 export async function gatherDebugEmbeddingConfig(
   knowledgeGraphManager: KnowledgeGraphManager
 ): Promise<DebugEmbeddingConfigInfo> {
-  const kgm = knowledgeGraphManager as KnowledgeGraphManagerDiagnostics;
+  const kgm = knowledgeGraphManager as unknown as KnowledgeGraphManagerDiagnostics;
 
   const storageType = process.env.MEMORY_STORAGE_TYPE || 'neo4j';
   const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
