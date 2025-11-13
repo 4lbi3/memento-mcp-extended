@@ -7,6 +7,7 @@ import { Neo4jConnectionManager } from './Neo4jConnectionManager.js';
 import { DEFAULT_NEO4J_CONFIG, type Neo4jConfig } from './Neo4jConfig.js';
 import { Neo4jSchemaManager } from './Neo4jSchemaManager.js';
 import { logger } from '../../utils/logger.js';
+import { classifyError, ErrorCategory } from '../../utils/errors.js';
 import neo4j from 'neo4j-driver';
 import { Neo4jVectorStore } from './Neo4jVectorStore.js';
 import { EmbeddingServiceFactory } from '../../embeddings/EmbeddingServiceFactory.js';
@@ -96,6 +97,26 @@ interface KnowledgeGraphWithDiagnostics extends KnowledgeGraph {
   diagnostics?: Record<string, unknown>;
 }
 
+function logNeo4jStorageProviderError(
+  operation: string,
+  error: unknown,
+  context: Record<string, unknown> = {}
+): ErrorCategory {
+  const category = classifyError(error);
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  logger.error(`Neo4jStorageProvider: ${operation} failed`, {
+    operation,
+    category,
+    error: errorMessage,
+    stack: errorStack,
+    ...context,
+  });
+
+  return category;
+}
+
 /**
  * A storage provider that uses Neo4j to store the knowledge graph
  */
@@ -154,12 +175,12 @@ export class Neo4jStorageProvider implements StorageProvider {
         dimensions: this.embeddingService.getProviderInfo().dimensions,
       });
     } catch (error) {
-      logger.error('Neo4jStorageProvider: Failed to initialize embedding service', error);
+      logNeo4jStorageProviderError('initialize embedding service', error);
     }
 
     // Initialize the schema and vector store
     this.initializeSchema().catch((err) => {
-      logger.error('Failed to initialize Neo4j schema', err);
+      logNeo4jStorageProviderError('initialize schema', err);
     });
   }
 
@@ -183,11 +204,13 @@ export class Neo4jStorageProvider implements StorageProvider {
         await this.vectorStore.initialize();
         logger.info('Neo4j vector store initialized successfully');
       } catch (vectorError) {
-        logger.error('Failed to initialize Neo4j vector store', vectorError);
+        logNeo4jStorageProviderError('initialize vector store', vectorError, {
+          phase: 'vector initialization',
+        });
         // Continue even if vector store initialization fails
       }
     } catch (schemaError) {
-      logger.error('Failed to initialize Neo4j schema', schemaError);
+      logNeo4jStorageProviderError('initialize schema', schemaError);
       throw schemaError;
     }
   }
@@ -200,7 +223,7 @@ export class Neo4jStorageProvider implements StorageProvider {
       await this.connectionManager.close();
       logger.debug('Neo4j connections closed');
     } catch (error) {
-      logger.error('Error closing Neo4j connections', error);
+      logNeo4jStorageProviderError('close connections', error);
     }
   }
 
@@ -343,7 +366,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         timeTaken,
       };
     } catch (error) {
-      logger.error('Error loading graph from Neo4j', error);
+      logNeo4jStorageProviderError('load graph', error, {
+        stage: 'loadGraph',
+      });
       throw error;
     }
   }
@@ -460,7 +485,10 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error saving graph to Neo4j', error);
+      logNeo4jStorageProviderError('save graph', error, {
+        entityCount: graph.entities.length,
+        relationCount: graph.relations.length,
+      });
       throw error;
     }
   }
@@ -552,7 +580,13 @@ export class Neo4jStorageProvider implements StorageProvider {
         timeTaken,
       };
     } catch (error) {
-      logger.error('Error searching nodes in Neo4j', error);
+      logNeo4jStorageProviderError('search nodes', error, {
+        query,
+        options: {
+          limit: options.limit,
+          entityTypes: options.entityTypes,
+        },
+      });
       throw error;
     }
   }
@@ -617,7 +651,10 @@ export class Neo4jStorageProvider implements StorageProvider {
         timeTaken,
       };
     } catch (error) {
-      logger.error('Error opening nodes in Neo4j', error);
+      logNeo4jStorageProviderError('open nodes', error, {
+        requestedNames: names,
+        requestedCount: names.length,
+      });
       throw error;
     }
   }
@@ -751,7 +788,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error creating entities in Neo4j', error);
+      logNeo4jStorageProviderError('create entities', error, {
+        entityCount: entities.length,
+      });
       throw error;
     }
   }
@@ -871,7 +910,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error creating relations in Neo4j', error);
+      logNeo4jStorageProviderError('create relations', error, {
+        relationCount: relations.length,
+      });
       throw error;
     }
   }
@@ -1163,7 +1204,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error adding observations in Neo4j', error);
+      logNeo4jStorageProviderError('add observations', error, {
+        entityNames: observations.map((obs) => obs.entityName),
+      });
       throw error;
     }
   }
@@ -1206,7 +1249,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error deleting entities in Neo4j', error);
+      logNeo4jStorageProviderError('delete entities', error, {
+        entityNames,
+      });
       throw error;
     }
   }
@@ -1277,7 +1322,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error deleting observations in Neo4j', error);
+      logNeo4jStorageProviderError('delete observations', error, {
+        entityNames: deletions.map((d) => d.entityName),
+      });
       throw error;
     }
   }
@@ -1326,7 +1373,13 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error deleting relations in Neo4j', error);
+      logNeo4jStorageProviderError('delete relations', error, {
+        relationSignatures: relations.map((relation) => ({
+          from: relation.from,
+          to: relation.to,
+          type: relation.relationType,
+        })),
+      });
       throw error;
     }
   }
@@ -1357,7 +1410,9 @@ export class Neo4jStorageProvider implements StorageProvider {
       const node = result.records[0].get('e').properties;
       return this.nodeToEntity(node);
     } catch (error) {
-      logger.error(`Error retrieving entity ${entityName} from Neo4j`, error);
+      logNeo4jStorageProviderError('get entity', error, {
+        entityName,
+      });
       throw error;
     }
   }
@@ -1398,7 +1453,11 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       return this.relationshipToRelation(rel, fromNode.name, toNode.name);
     } catch (error) {
-      logger.error(`Error retrieving relation from Neo4j`, error);
+      logNeo4jStorageProviderError('get relation', error, {
+        from,
+        to,
+        type,
+      });
       throw error;
     }
   }
@@ -1526,7 +1585,11 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error updating relation in Neo4j', error);
+      logNeo4jStorageProviderError('update relation', error, {
+        from: relation.from,
+        to: relation.to,
+        type: relation.relationType,
+      });
       throw error;
     }
   }
@@ -1559,7 +1622,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         return this.nodeToEntity(node);
       });
     } catch (error) {
-      logger.error(`Error retrieving history for entity ${entityName} from Neo4j`, error);
+      logNeo4jStorageProviderError('get entity history', error, {
+        entityName,
+      });
       throw error;
     }
   }
@@ -1602,7 +1667,11 @@ export class Neo4jStorageProvider implements StorageProvider {
         return this.relationshipToRelation(rel, fromNode.name, toNode.name);
       });
     } catch (error) {
-      logger.error(`Error retrieving relation history from Neo4j`, error);
+      logNeo4jStorageProviderError('get relation history', error, {
+        from,
+        to,
+        relationType,
+      });
       throw error;
     }
   }
@@ -1664,7 +1733,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         timeTaken,
       };
     } catch (error) {
-      logger.error(`Error retrieving graph state at timestamp ${timestamp} from Neo4j`, error);
+      logNeo4jStorageProviderError('get graph by timestamp', error, {
+        timestamp,
+      });
       throw error;
     }
   }
@@ -1753,7 +1824,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         },
       };
     } catch (error) {
-      logger.error('Error getting decayed graph from Neo4j', error);
+      logNeo4jStorageProviderError('get decayed graph', error, {
+        decayConfig: this.decayConfig,
+      });
       throw error;
     }
   }
@@ -1805,7 +1878,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error(`Error updating embedding for entity ${entityName} in Neo4j`, error);
+      logNeo4jStorageProviderError('update entity embedding', error, {
+        entityName,
+      });
       throw error;
     }
   }
@@ -1853,7 +1928,9 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error(`Error retrieving embedding for entity ${entityName} from Neo4j`, error);
+      logNeo4jStorageProviderError('get entity embedding', error, {
+        entityName,
+      });
       return null;
     }
   }
@@ -1932,7 +2009,10 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
-      logger.error('Error finding similar entities in Neo4j', error);
+      logNeo4jStorageProviderError('find similar entities', error, {
+        queryVectorSize: queryVector.length,
+        limit,
+      });
       return [];
     }
   }
@@ -1998,10 +2078,10 @@ export class Neo4jStorageProvider implements StorageProvider {
             status: 'success',
           });
         } catch (initError) {
-          logger.error(
-            'Neo4jStorageProvider: Failed to initialize vector store for semantic search',
-            initError
-          );
+          logNeo4jStorageProviderError('semantic vector store init', initError, {
+            query,
+            limit: options.limit,
+          });
           diagnostics.stepsTaken.push({
             step: 'vectorStoreInitialization',
             timestamp: Date.now(),
@@ -2061,10 +2141,10 @@ export class Neo4jStorageProvider implements StorageProvider {
             error: embedError instanceof Error ? embedError.message : String(embedError),
           });
 
-          logger.error(
-            'Neo4jStorageProvider: Failed to generate query vector for semantic search',
-            embedError
-          );
+          logNeo4jStorageProviderError('generate query vector', embedError, {
+            query,
+            limit: options.limit,
+          });
         }
       } else if (options.queryVector) {
         diagnostics.stepsTaken.push({
@@ -2209,7 +2289,13 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       return textResults;
     } catch (error) {
-      logger.error('Error performing semantic search in Neo4j', error);
+      logNeo4jStorageProviderError('semantic search', error, {
+        query,
+        options: {
+          ...options,
+          queryVector: undefined,
+        },
+      });
       throw error;
     }
   }

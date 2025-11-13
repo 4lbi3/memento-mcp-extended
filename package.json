@@ -28,6 +28,7 @@
     "test:coverage": "vitest run --coverage",
     "test:verbose": "clear && vitest run --reporter verbose",
     "test:integration": "TEST_INTEGRATION=true npm test",
+    "error-scenarios": "tsx scripts/error-scenarios.ts",
     "lint": "eslint 'src/**/*.ts'",
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "format": "prettier --write \"**/*.{ts,json,md}\"",

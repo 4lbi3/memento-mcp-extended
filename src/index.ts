@@ -11,8 +11,8 @@ import { createJobDatabaseConnectionManager } from './storage/neo4j/Neo4jConnect
 import { DEFAULT_NEO4J_CONFIG, validateNeo4jConfig } from './storage/neo4j/Neo4jConfig.js';
 import { ensureJobDatabasePrepared } from './storage/neo4j/JobDatabaseInitializer.js';
 import { logger } from './utils/logger.js';
-import { classifyError, ErrorCategory } from './utils/errors.js';
-import { calculateRetryDelay, DEFAULT_RETRY_POLICY, type RetryPolicy } from './utils/retry.js';
+import { runRecurringTask } from './utils/runRecurringTask.js';
+import { DEFAULT_RETRY_POLICY, type RetryPolicy } from './utils/retry.js';
 import { startHealthServer } from './server/health.js';
 
 // Re-export the types and classes for use in other modules
@@ -49,47 +49,6 @@ const JOB_RETRY_POLICY: RetryPolicy = {
 
 const EMBEDDING_PROCESS_INTERVAL = 10000;
 const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
-
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function runRecurringTask(taskName: string, interval: number, task: () => Promise<void>) {
-  let transientAttempts = 0;
-
-  while (true) {
-    try {
-      await task();
-      transientAttempts = 0;
-    } catch (error: unknown) {
-      const category = classifyError(error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`${taskName} failed`, { error: errorMessage, category });
-
-      if (category === ErrorCategory.TRANSIENT) {
-        transientAttempts += 1;
-        const delay = calculateRetryDelay(transientAttempts, JOB_RETRY_POLICY);
-        logger.warn(`${taskName} will retry after transient failure`, {
-          attempt: transientAttempts,
-          delay,
-          category,
-        });
-        await wait(delay);
-        continue;
-      }
-
-      if (category === ErrorCategory.CRITICAL) {
-        logger.error(`${taskName} halted due to a critical error`, {
-          error: errorMessage,
-          category,
-        });
-        break;
-      }
-
-      transientAttempts = 0;
-    }
-
-    await wait(interval);
-  }
-}
 
 // Validate Neo4j configuration at startup
 const neo4jConfig = DEFAULT_NEO4J_CONFIG;
@@ -234,7 +193,7 @@ try {
         return;
       }
       await embeddingJobManager.processJobs(10);
-    });
+    }, JOB_RETRY_POLICY);
 
     void runRecurringTask('embedding job cleanup', CLEANUP_INTERVAL, async () => {
       if (!embeddingJobManager) {
@@ -249,7 +208,7 @@ try {
           retentionDays,
         });
       }
-    });
+    }, JOB_RETRY_POLICY);
 
     startHealthServer(embeddingJobManager);
   } else {

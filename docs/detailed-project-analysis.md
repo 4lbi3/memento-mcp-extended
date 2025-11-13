@@ -82,6 +82,16 @@ interface KnowledgeGraphManagerOptions {
 - **openNodes()**: Retrieves specific entities by name with related relations
 - **search()**: Advanced search with semantic, hybrid, and keyword options
 
+**4.1 Search Observability Enhancements:**
+- Search results now include a `searchType` flag (`semantic`, `hybrid`, or `keyword`) plus an optional `fallbackReason` that describes why semantic/hybrid search was replaced.
+- The new `searchDiagnostics` payload bundles `requestedSearchType`, `actualSearchType`, embedding coverage stats, vector/query timings, and the fallback chain so clients can signal degraded modes to downstream systems.
+- `strictMode` allows callers to enforce semantic-only results by throwing whenever `searchType` falls back to `keyword`, enabling transparent migration for clients that can’t tolerate silent degradation.
+
+**4.2 Migration Guidance for Search Consumers:**
+- Treat `fallbackReason` as a signal for instrumentation or user-facing messaging. For example, log or surface `embedding_service_not_configured` / `vector_store_unavailable` before showing keyword matches.
+- Use `searchType` and `searchDiagnostics` to decide whether to retry with different settings, or to escalate incidents when `actualSearchType !== requestedSearchType`.
+- Remember to guard `searchType === 'keyword'` before assuming full semantic quality; the diagnostics payload contains timing and coverage — don’t ignore it.
+
 **5. Temporal Features:**
 - **getEntityHistory()**: Retrieves complete version history for entities
 - **getRelationHistory()**: Retrieves complete version history for relations
@@ -145,6 +155,12 @@ OPTIONS {
   }
 }
 ```
+
+### Observability and Health
+
+- Embedding job loops now delegate to a reusable `runRecurringTask` helper that classifies every failure as `TRANSIENT`, `PERMANENT`, or `CRITICAL`, applies exponential backoff, and publishes a `/health` endpoint (configurable via `HEALTH_PORT`) that reports consecutive failure counts, success rates, and the current state (`HEALTHY`, `DEGRADED`, `CRITICAL`).
+- `Neo4jStorageProvider` error handling now logs through a shared classifier so every catch includes operation names, entity or query metadata, and the assigned `ErrorCategory` before bubbling the failure. The same classification powers job health metrics and the `/health` diagnostics.
+- Environment variables like `HEALTH_PORT` and `EMBED_JOB_MAX_RETRIES` let deployers tune monitoring and retry budgets; the health endpoint is ideal for synthetic checks or Prometheus scraping, and the enhanced logs make triaging faster when the fallbackReason or health state changes.
 
 **Index Management:**
 - **Uniqueness Constraints**: Ensures entity name uniqueness with temporal validity
@@ -993,6 +1009,8 @@ if (process.env.TEST_INTEGRATION) {
   });
 }
 ```
+
+- `NEO4J_INTEGRATION_DATABASE` lets you direct integration suites to a disposable Neo4j database (default `integrationtest`, must contain only letters/numbers); the tests create and drop this database for you so production data remains untouched.
 
 ## Docker Configuration Analysis
 

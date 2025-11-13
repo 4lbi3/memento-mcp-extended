@@ -5,6 +5,17 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.15] - 2025-11-13
+
+### Added
+- `scripts/error-scenarios.ts` plus `npm run error-scenarios` to drive semantic fallback, strict-mode failure, and keyword-performance checks against the real OpenAI/Neo4j stack.
+- Integration tests now spin up a disposable Neo4j database whose name can be configured via `NEO4J_INTEGRATION_DATABASE` before being dropped, so running `npm run test:integration` never touches production data.
+
+### Changed
+- Integration suites and `Neo4jIntegration.test.ts` read all Neo4j connection parameters (uri, bolt port, username, password, database name) from the environment, sanitize the database identifier to letters/numbers, and create/drop the dedicated integration database with scoped permissions.
+- Updated docs to describe the guarded integration workflow, health monitoring, and new script (README/docs/detailed-project-analysis.md).
+- The `Neo4jStorageProvider` now logs with `ErrorCategory` metadata everywhere, performs structured retries, and exposes the `runRecurringTask` helper for consistent backoff; job loops, semantic search diagnostics, and changelog entries reflect those observability improvements.
+
 ## [0.3.9.14] - 2025-11-13
 
 ### Added

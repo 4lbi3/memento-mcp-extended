@@ -143,6 +143,30 @@ describe('KnowledgeGraphManager Search', () => {
     expect(result.entities[0].name).toBe('KeywordResult');
   });
 
+  it('should explain fallbackReason when semantic search capability is missing', async () => {
+    delete mockStorageProvider.semanticSearch;
+
+    const result = await manager.search('test query', { semanticSearch: true });
+
+    expect(result.searchType).toBe('keyword');
+    expect(result.fallbackReason).toBe('no_embeddings_available');
+    expect(result.searchDiagnostics).toEqual(
+      expect.objectContaining({
+        requestedSearchType: 'semantic',
+        actualSearchType: 'keyword',
+        fallbackReason: 'no_embeddings_available',
+      })
+    );
+  });
+
+  it('throws when strictMode enforces semantic search but fallback occurs', async () => {
+    delete mockStorageProvider.semanticSearch;
+
+    await expect(
+      manager.search('test query', { semanticSearch: true, strictMode: true })
+    ).rejects.toThrow('Semantic search unavailable');
+  });
+
   it('should fall back to basic search for file-based implementation', async () => {
     // Create a manager without a storage provider
     const fileBasedManager = new KnowledgeGraphManager({

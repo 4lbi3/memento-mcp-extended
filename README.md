@@ -651,6 +651,12 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 
 > **Note**: For testing environments, the system will mock embedding generation if no API key is provided. However, using real embeddings is recommended for integration testing.
 
+## Running Integration Tests
+
+- Integration suites only run when you explicitly set `TEST_INTEGRATION=true`; they are skipped otherwise to protect production data.
+- Use `npm run test:integration` (or `TEST_INTEGRATION=true npm test`) to execute them.
+- Configure `NEO4J_INTEGRATION_DATABASE` (defaults to `integrationtest`, must be letters/numbers only) so the suite works against a disposable Neo4j database that the suite creates and drops automatically.
+
 ## Integration with Claude Desktop
 
 ### Configuration

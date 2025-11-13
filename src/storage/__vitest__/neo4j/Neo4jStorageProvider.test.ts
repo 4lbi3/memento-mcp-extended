@@ -8,6 +8,7 @@ import { Neo4jSchemaManager } from '../../neo4j/Neo4jSchemaManager';
 import { Neo4jConfig } from '../../neo4j/Neo4jConfig';
 import { KnowledgeGraph, Entity } from '../../../KnowledgeGraphManager';
 import { Relation } from '../../../types/relation';
+import { logger } from '../../../utils/logger.js';
 
 // Mock neo4j driver
 vi.mock('neo4j-driver', () => {
@@ -606,6 +607,58 @@ describe('Neo4jStorageProvider', () => {
 
       // Verify that temporal validation methods are implemented
       expect(storageProvider.updateRelation).toBeDefined();
+    });
+  });
+
+  describe('error logging helper integration', () => {
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      logSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    it('captures context when searchNodes fails', async () => {
+      const failure = new Error('search failure');
+      storageProvider.getConnectionManager().executeQuery.mockRejectedValueOnce(failure);
+
+      await expect(storageProvider.searchNodes('broken query')).rejects.toThrow('search failure');
+
+      const logCall = logSpy.mock.calls.find(
+        (call) => call[0] === 'Neo4jStorageProvider: search nodes failed'
+      );
+      expect(logCall).toBeDefined();
+      expect(logCall?.[1]).toEqual(
+        expect.objectContaining({
+          query: 'broken query',
+          options: expect.objectContaining({
+            limit: undefined,
+          }),
+        })
+      );
+    });
+
+    it('captures context when openNodes fails', async () => {
+      const failure = new Error('open failure');
+      storageProvider.getConnectionManager().executeQuery.mockRejectedValueOnce(failure);
+
+      await expect(storageProvider.openNodes(['entity-a', 'entity-b'])).rejects.toThrow(
+        'open failure'
+      );
+
+      const logCall = logSpy.mock.calls.find(
+        (call) => call[0] === 'Neo4jStorageProvider: open nodes failed'
+      );
+      expect(logCall).toBeDefined();
+      expect(logCall?.[1]).toEqual(
+        expect.objectContaining({
+          requestedNames: ['entity-a', 'entity-b'],
+          requestedCount: 2,
+        })
+      );
     });
   });
 });
