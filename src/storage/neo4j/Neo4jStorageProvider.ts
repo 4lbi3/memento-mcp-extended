@@ -213,10 +213,20 @@ export class Neo4jStorageProvider implements StorageProvider {
     const observations =
       typeof node.observations === 'string' ? JSON.parse(node.observations as string) : [];
 
+    // Convert embedding vector to EntityEmbedding if present
+    const embedding = node.embedding
+      ? {
+          vector: node.embedding as number[],
+          model: 'unknown', // Model info not stored in Neo4j
+          lastUpdated: (node.updatedAt as number) || Date.now(),
+        }
+      : undefined;
+
     return {
       name: node.name as string,
       entityType: node.entityType as string,
       observations,
+      embedding,
       id: node.id as string | undefined,
       version: node.version as number | undefined,
       createdAt: node.createdAt as number | undefined,

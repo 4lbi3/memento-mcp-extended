@@ -5,6 +5,16 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.9] - 2025-11-13
+
+### Fixed
+- **Entity Embedding Retrieval:** Fixed `nodeToEntity` method to properly include embedding data when converting Neo4j nodes to Entity objects
+  - Embeddings are now correctly returned by `loadGraph()`, `searchNodes()`, `openNodes()`, `getEntity()`, `getEntityHistory()`, and `findSimilarEntities()`
+  - When an entity has an embedding stored in Neo4j, it's now properly converted to the `EntityEmbedding` format with `vector`, `model`, and `lastUpdated` fields
+  - For newly created entities (without embeddings yet), the field correctly remains `undefined`
+  - Improves debugging and enables future logic that depends on checking embedding presence
+  - No breaking changes - backward compatible as `embedding` was already declared optional in the `Entity` interface
+
 ## [0.3.9.8] - 2025-11-12
 
 ### Changed
