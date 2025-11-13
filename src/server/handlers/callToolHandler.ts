@@ -1,5 +1,6 @@
 import * as toolHandlers from './toolHandlers/index.js';
 import type { KnowledgeGraphManager, Relation } from '../../KnowledgeGraphManager.js';
+import { gatherDebugEmbeddingConfig } from '../../diagnostics/debugEmbeddingConfig.js';
 
 /**
  * Handles the CallTool request.
@@ -449,129 +450,8 @@ export async function handleCallToolRequest(
         }
 
       case 'debug_embedding_config':
-        // Diagnostic tool to check embedding configuration
         try {
-          // NOTE: This diagnostic tool accesses private KnowledgeGraphManager internals
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const kgmAny = knowledgeGraphManager as any;
-
-          // Check for OpenAI API key
-          const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
-          const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
-
-          // Check if embedding job manager is initialized
-          const hasEmbeddingJobManager = !!kgmAny.embeddingJobManager;
-
-          // Get storage provider info
-          const storageType = process.env.MEMORY_STORAGE_TYPE || 'neo4j';
-          const storageProvider = kgmAny.storageProvider;
-
-          // Get Neo4j specific configuration
-          const neo4jInfo: {
-            uri: string;
-            username: string;
-            database: string;
-            vectorIndex: string;
-            vectorDimensions: string;
-            similarityFunction: string;
-            connectionStatus: string;
-            vectorStoreStatus?: string;
-          } = {
-            uri: process.env.NEO4J_URI || 'default',
-            username: process.env.NEO4J_USERNAME ? 'configured' : 'not configured',
-            database: process.env.NEO4J_DATABASE || 'neo4j',
-            vectorIndex: process.env.NEO4J_VECTOR_INDEX || 'entity_embeddings',
-            vectorDimensions: process.env.NEO4J_VECTOR_DIMENSIONS || '1536',
-            similarityFunction: process.env.NEO4J_SIMILARITY_FUNCTION || 'cosine',
-            connectionStatus: 'unknown',
-          };
-
-          // Check if Neo4j connection manager is available
-          if (storageProvider && typeof storageProvider.getConnectionManager === 'function') {
-            try {
-              const connectionManager = storageProvider.getConnectionManager();
-              if (connectionManager) {
-                neo4jInfo.connectionStatus = 'available';
-
-                // Check if vector store is initialized
-                if (storageProvider.vectorStore) {
-                  neo4jInfo.vectorStoreStatus = 'available';
-                } else {
-                  neo4jInfo.vectorStoreStatus = 'not initialized';
-                }
-              }
-            } catch (error: Error | unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              neo4jInfo.connectionStatus = `error: ${errorMessage}`;
-            }
-          }
-
-          // Count entities with embeddings via Neo4j vector store
-          let entitiesWithEmbeddings = 0;
-          if (storageProvider && storageProvider.countEntitiesWithEmbeddings) {
-            try {
-              entitiesWithEmbeddings = await storageProvider.countEntitiesWithEmbeddings();
-            } catch (error) {
-              process.stderr.write(`[ERROR] Error checking embeddings count: ${error}\n`);
-            }
-          }
-
-          // Get embedding service information
-          let embeddingServiceInfo = null;
-          if (hasEmbeddingJobManager && kgmAny.embeddingJobManager.embeddingService) {
-            try {
-              embeddingServiceInfo = kgmAny.embeddingJobManager.embeddingService.getModelInfo();
-            } catch (error: Error | unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              process.stderr.write(
-                `[ERROR] Error getting embedding service info: ${errorMessage}\n`
-              );
-            }
-          }
-
-          // Get embedding service provider info if available
-          let embeddingProviderInfo = null;
-          if (storageProvider && storageProvider.embeddingService) {
-            try {
-              embeddingProviderInfo = storageProvider.embeddingService.getProviderInfo();
-            } catch (error: Error | unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              process.stderr.write(
-                `[ERROR] Error getting embedding provider info: ${errorMessage}\n`
-              );
-            }
-          }
-
-          // Check pending embedding jobs if available
-          let pendingJobs = 0;
-          if (hasEmbeddingJobManager && kgmAny.embeddingJobManager.getPendingJobs) {
-            try {
-              pendingJobs = kgmAny.embeddingJobManager.getPendingJobs().length;
-            } catch (error: Error | unknown) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              process.stderr.write(`[ERROR] Error getting pending jobs: ${errorMessage}\n`);
-            }
-          }
-
-          // Return diagnostic information with proper formatting
-          const diagnosticInfo = {
-            storage_type: storageType,
-            openai_api_key_present: hasOpenAIKey,
-            embedding_model: embeddingModel,
-            embedding_job_manager_initialized: hasEmbeddingJobManager,
-            embedding_service_initialized: !!embeddingProviderInfo,
-            embedding_service_info: embeddingServiceInfo,
-            embedding_provider_info: embeddingProviderInfo,
-            neo4j_config: neo4jInfo,
-            entities_with_embeddings: entitiesWithEmbeddings,
-            pending_embedding_jobs: pendingJobs,
-            environment_variables: {
-              DEBUG: process.env.DEBUG === 'true',
-              NODE_ENV: process.env.NODE_ENV,
-              MEMORY_STORAGE_TYPE: process.env.MEMORY_STORAGE_TYPE || 'neo4j',
-            },
-          };
-
+          const diagnosticInfo = await gatherDebugEmbeddingConfig(knowledgeGraphManager);
           return {
             content: [
               {
