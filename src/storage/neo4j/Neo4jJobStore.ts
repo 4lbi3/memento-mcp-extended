@@ -116,6 +116,8 @@ export class Neo4jJobStore {
         job.attempts = 0,
         job.max_attempts = toInteger($max_attempts),
         job.error = null,
+        job.error_category = null,
+        job.error_stack = null,
         job.processed_at = null,
         job.lock_owner = null,
         job.lock_until = null
@@ -287,18 +289,25 @@ export class Neo4jJobStore {
    * @param error Optional error message
    * @returns true if job was failed, false otherwise
    */
-  async failJob(jobId: string, lockOwner: string, error?: string): Promise<boolean> {
+  async failJob(
+    jobId: string,
+    lockOwner: string,
+    error?: string,
+    options?: { category?: string; stack?: string; permanent?: boolean }
+  ): Promise<boolean> {
     this.log(`Failing job ${jobId} for owner ${lockOwner}`);
 
     const query = `
       MATCH (job:EmbedJob {id: $jobId, lock_owner: $lockOwner})
       WHERE job.status = 'processing'
       SET job.error = $error,
+          job.error_category = $errorCategory,
+          job.error_stack = $errorStack,
           job.processed_at = timestamp(),
           job.lock_owner = null,
           job.lock_until = null,
           job.status = CASE
-            WHEN job.attempts >= job.max_attempts THEN 'failed'
+            WHEN $permanent OR job.attempts >= job.max_attempts THEN 'failed'
             ELSE 'pending'
           END
       RETURN count(job) as updated
@@ -308,6 +317,9 @@ export class Neo4jJobStore {
       jobId,
       lockOwner,
       error: error || null,
+      errorCategory: options?.category || null,
+      errorStack: options?.stack || null,
+      permanent: options?.permanent || false,
     });
 
     const updated = result.records[0]?.get('updated') as number || 0;

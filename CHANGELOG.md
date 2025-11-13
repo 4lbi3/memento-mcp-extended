@@ -5,13 +5,41 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.9.13]
+## [0.3.9.14] - 2025-11-13
+
+### Added
+- Centralised error classification utilities (`ErrorCategory`, type guards for Axios/Neo4j/network errors, and dedicated unit tests) so every catch site can determine whether failures are transient, permanent, or critical before choosing recovery.
+- Introduced a `/health` endpoint driven by `Neo4jEmbeddingJobManager.getHealthStatus()` to expose consecutive failure counts, success rate, and error-pattern histograms for monitoring systems.
+
+### Changed
+- `Neo4jEmbeddingJobManager` now heartbeats leased jobs, retries transient failures with exponential backoff, logs structured failure metadata (category, stack, rate limiter state), and annotates `:EmbedJob` nodes with error category/stack so operators can distinguish retriable vs. permanent failures.
+- Search results now include `searchType`, `fallbackReason`, and richer diagnostics (timings, embedding coverage, fallback chain) plus a strict mode that throws when semantic search is explicitly requested but unavailable.
+- The scheduled job and cleanup loops use the shared retry policy and surface health transitions so degraded workers log warnings before human intervention.
+
+Clean up embedding job manager implementation by consolidating to Neo4j-only approach
+
+Remove legacy EmbeddingJobManager.ts (SQLite-specific implementation)
+Remove EmbeddingJobManager.test.ts as it tests the deprecated SQLite version
+Remove legacy test files for SQLite-specific features:
+EmbeddingCaching.test.ts
+EmbeddingRateLimiter.test.ts
+EmbeddingLogging.test.ts
+EmbeddingGeneration.test.ts
+KnowledgeGraphManagerIntegration.test.ts (SQLite mocks)
+Update KnowledgeGraphManager to use Neo4jEmbeddingJobManager type exclusively
+Update index.ts imports and type declarations to reflect Neo4j-only implementation
+Update log messages to clarify Neo4jEmbeddingJobManager is the sole implementation
+Fix diagnostic type handling for accessing private properties
+Verify all 299 tests pass
+The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative embedding job manager with proper Neo4j persistence via Neo4jJobStore. This resolves the issue where embedding jobs were coupled to SQLite and incompatible with the Neo4j storage layer.
+
+## [0.3.9.13] - 2025-11-13
 
 ### Changed
 - Standardised Neo4j relation conversions so optional `strength`/`confidence` fields now preserve `null` values end-to-end, matching entity handling and Neo4j’s JSON semantics.
 - Updated the `Relation` interface and validators to accept `null` as the canonical “unset” value for optional numeric fields and expanded the unit tests accordingly.
 
-## [0.3.9.12]
+## [0.3.9.12] - 2025-11-13
 
 ### Changed
 - Extracted `debug_embedding_config` diagnostics into `src/diagnostics/debugEmbeddingConfig.ts`, reducing `callToolHandler.ts` by ~150 lines and isolating troubleshooting logic from tool dispatching.

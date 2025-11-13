@@ -1,6 +1,7 @@
 import * as toolHandlers from './toolHandlers/index.js';
 import type { KnowledgeGraphManager, Relation } from '../../KnowledgeGraphManager.js';
 import { gatherDebugEmbeddingConfig } from '../../diagnostics/debugEmbeddingConfig.js';
+import { formatKnowledgeGraphForDisplay } from './utils/graphFormatter.js';
 
 /**
  * Handles the CallTool request.
@@ -88,10 +89,8 @@ export async function handleCallToolRequest(
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                await knowledgeGraphManager.searchNodes(String(args.query)),
-                null,
-                2
+              text: formatKnowledgeGraphForDisplay(
+                await knowledgeGraphManager.searchNodes(String(args.query))
               ),
             },
           ],
@@ -102,10 +101,8 @@ export async function handleCallToolRequest(
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                await knowledgeGraphManager.openNodes(args.names as string[]),
-                null,
-                2
+              text: formatKnowledgeGraphForDisplay(
+                await knowledgeGraphManager.openNodes(args.names as string[])
               ),
             },
           ],
@@ -371,7 +368,9 @@ export async function handleCallToolRequest(
           // Call the search method with semantic search options
           const results = await knowledgeGraphManager.search(String(args.query), searchOptions);
 
-          return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+          return {
+            content: [{ type: 'text', text: formatKnowledgeGraphForDisplay(results) }],
+          };
         } catch (error: Error | unknown) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {

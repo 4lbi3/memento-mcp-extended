@@ -220,7 +220,7 @@ const server = new Server({
   name: 'memento-mcp',
   version: '1.0.0',
   description: 'Memento MCP: Your persistent knowledge graph memory system',
-  publisher: 'gannonh',
+  publisher: '4lbi3',
 }, {
   capabilities: {
     tools: {},
@@ -560,7 +560,7 @@ export default defineConfig({
   "mcpServers": {
     "memento": {
       "command": "npx",
-      "args": ["-y", "@gannonh/memento-mcp"],
+      "args": ["-y", "@4lbi3/memento-mcp-extended"],
       "env": {
         "MEMORY_STORAGE_TYPE": "neo4j",
         "NEO4J_URI": "bolt://127.0.0.1:7687",

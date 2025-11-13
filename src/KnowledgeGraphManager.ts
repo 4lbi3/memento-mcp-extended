@@ -74,6 +74,55 @@ export interface KnowledgeGraph {
   total?: number;
   timeTaken?: number;
   diagnostics?: Record<string, unknown>;
+  semanticDiagnostics?: SemanticDiagnostics;
+  searchType?: SearchType;
+  fallbackReason?: FallbackReason;
+  searchDiagnostics?: SearchDiagnostics;
+}
+
+export type SearchType = 'semantic' | 'keyword' | 'hybrid';
+
+export type FallbackReason =
+  | 'embedding_service_not_configured'
+  | 'vector_store_unavailable'
+  | 'no_embeddings_available'
+  | 'query_embedding_failed'
+  | 'embedding_job_manager_missing';
+
+export interface SearchDiagnostics {
+  requestedSearchType: SearchType;
+  actualSearchType: SearchType;
+  fallbackReason?: FallbackReason;
+  queryVectorGenerationTime?: number;
+  vectorSearchTime?: number;
+  totalEntities?: number;
+  entitiesWithEmbeddings?: number;
+  embeddingCoverage?: number;
+}
+
+export interface SemanticDiagnostics {
+  queryVectorGenerationTime?: number;
+  vectorSearchTime?: number;
+}
+
+export interface KnowledgeGraphSearchOptions {
+  semanticSearch?: boolean;
+  hybridSearch?: boolean;
+  limit?: number;
+  threshold?: number;
+  minSimilarity?: number;
+  entityTypes?: string[];
+  facets?: string[];
+  offset?: number;
+  strictMode?: boolean;
+  includeDiagnostics?: boolean;
+}
+
+class SemanticSearchFallbackError extends Error {
+  constructor(public reason: FallbackReason, message?: string, public originalError?: unknown) {
+    super(message ?? reason);
+    this.name = 'SemanticSearchFallbackError';
+  }
 }
 
 // Re-export search types
@@ -119,6 +168,15 @@ export class KnowledgeGraphManager {
   private vectorStore?: VectorStore;
   // Expose the fs module for testing
   protected fsModule = fs;
+  private entityStatsCache?: {
+    totalEntities: number;
+    entitiesWithEmbeddings: number;
+    computedAt: number;
+  };
+  private lastSemanticDiagnostics?: {
+    queryVectorGenerationTime?: number;
+    vectorSearchTime?: number;
+  };
 
   constructor(options?: KnowledgeGraphManagerOptions) {
     this.storageProvider = options?.storageProvider;
@@ -761,33 +819,44 @@ export class KnowledgeGraphManager {
     options: { limit?: number; threshold?: number } = {}
   ): Promise<Array<{ name: string; score: number }>> {
     if (!this.embeddingJobManager) {
-      throw new Error('Embedding job manager is required for semantic search');
+      throw new SemanticSearchFallbackError('embedding_job_manager_missing');
     }
 
     const embeddingService = this.embeddingJobManager['embeddingService'];
     if (!embeddingService) {
-      throw new Error('Embedding service not available');
+      throw new SemanticSearchFallbackError('embedding_service_not_configured');
     }
 
-    // Generate embedding for the query
-    const embedding = await embeddingService.generateEmbedding(query);
+    const queryVectorStart = Date.now();
+    let encoding: number[];
 
-    // If we have a vector store, use it directly
     try {
-      // Ensure vector store is available
+      encoding = await embeddingService.generateEmbedding(query);
+    } catch (error) {
+      throw new SemanticSearchFallbackError('query_embedding_failed', undefined, error);
+    }
+
+    const queryVectorGenerationTime = Date.now() - queryVectorStart;
+    let vectorSearchTime: number | undefined;
+
+    try {
       const vectorStore = await this.ensureVectorStore().catch(() => undefined);
 
       if (vectorStore) {
         const limit = options.limit || 10;
         const minSimilarity = options.threshold || 0.7;
-
-        // Search the vector store
-        const results = await vectorStore.search(embedding, {
+        const searchStart = Date.now();
+        const results = await vectorStore.search(encoding, {
           limit,
           minSimilarity,
         });
+        vectorSearchTime = Date.now() - searchStart;
 
-        // Convert to the expected format
+        this.lastSemanticDiagnostics = {
+          queryVectorGenerationTime,
+          vectorSearchTime,
+        };
+
         return results.map((result) => ({
           name: result.id.toString(),
           score: result.similarity,
@@ -795,19 +864,27 @@ export class KnowledgeGraphManager {
       }
     } catch (error) {
       logger.error('Failed to search vector store', error);
-      // Fall through to other methods
     }
 
-    // If we have a vector search method in the storage provider, use it
     if (this.storageProvider && hasSearchVectors(this.storageProvider)) {
-      return this.storageProvider.searchVectors(
-        embedding,
+      const searchStart = Date.now();
+      const results = await this.storageProvider.searchVectors(
+        encoding,
         options.limit || 10,
         options.threshold || 0.7
       );
+      vectorSearchTime = Date.now() - searchStart;
+      this.lastSemanticDiagnostics = {
+        queryVectorGenerationTime,
+        vectorSearchTime,
+      };
+      return results;
     }
 
-    // Otherwise, return an empty result
+    this.lastSemanticDiagnostics = {
+      queryVectorGenerationTime,
+    };
+
     return [];
   }
 
@@ -821,89 +898,190 @@ export class KnowledgeGraphManager {
     return this.loadGraph();
   }
 
-  /**
-   * Search the knowledge graph with various options
-   *
-   * @param query The search query string
-   * @param options Search options
-   * @returns Promise resolving to a knowledge graph with search results
-   */
-  async search(
-    query: string,
-    options: {
-      semanticSearch?: boolean;
-      hybridSearch?: boolean;
-      limit?: number;
-      threshold?: number;
-      minSimilarity?: number;
-      entityTypes?: string[];
-      facets?: string[];
-      offset?: number;
-    } = {}
-  ): Promise<KnowledgeGraph> {
-    // If hybridSearch is true, always set semanticSearch to true as well
-    if (options.hybridSearch) {
-      options = { ...options, semanticSearch: true };
+  private consumeLastSemanticDiagnostics():
+    | {
+        queryVectorGenerationTime?: number;
+        vectorSearchTime?: number;
+      }
+    | undefined {
+    const diagnostics = this.lastSemanticDiagnostics;
+    this.lastSemanticDiagnostics = undefined;
+    return diagnostics;
+  }
+
+  private async computeEntityStats(): Promise<{ totalEntities: number; entitiesWithEmbeddings: number }> {
+    const cacheDuration = 60 * 1000;
+    const now = Date.now();
+
+    if (this.entityStatsCache && now - this.entityStatsCache.computedAt < cacheDuration) {
+      return {
+        totalEntities: this.entityStatsCache.totalEntities,
+        entitiesWithEmbeddings: this.entityStatsCache.entitiesWithEmbeddings,
+      };
     }
 
-    // Check if semantic search is requested
-    if (options.semanticSearch || options.hybridSearch) {
-      // Check if we have a storage provider with semanticSearch method
+    const fullGraph = await this.loadGraph();
+    const totalEntities = fullGraph.entities.length;
+    const entitiesWithEmbeddings = fullGraph.entities.filter((entity) => {
+      const vector = entity.embedding?.vector;
+      return Array.isArray(vector) ? vector.length > 0 : Boolean(vector);
+    }).length;
+
+    this.entityStatsCache = {
+      totalEntities,
+      entitiesWithEmbeddings,
+      computedAt: now,
+    };
+
+    return { totalEntities, entitiesWithEmbeddings };
+  }
+
+  async search(
+    query: string,
+    options: KnowledgeGraphSearchOptions = {}
+  ): Promise<KnowledgeGraph> {
+    const normalizedOptions: KnowledgeGraphSearchOptions = { ...options };
+
+    if (normalizedOptions.hybridSearch) {
+      normalizedOptions.semanticSearch = true;
+    }
+
+    const requestedSearchType: SearchType = normalizedOptions.hybridSearch
+      ? 'hybrid'
+      : normalizedOptions.semanticSearch
+      ? 'semantic'
+      : 'keyword';
+    const includeDiagnostics = normalizedOptions.includeDiagnostics ?? true;
+    const strictMode = normalizedOptions.strictMode ?? false;
+    const startTime = Date.now();
+
+    let actualSearchType: SearchType = 'keyword';
+    let fallbackReason: FallbackReason | undefined;
+    let semanticResult: KnowledgeGraph | undefined;
+
+    const semanticRequested = Boolean(
+      normalizedOptions.semanticSearch || normalizedOptions.hybridSearch
+    );
+
+    if (semanticRequested) {
       if (this.storageProvider && hasSemanticSearch(this.storageProvider)) {
-        try {
-          // Generate query vector if we have an embedding service
-          if (this.embeddingJobManager) {
-            const embeddingService = this.embeddingJobManager['embeddingService'];
-            if (embeddingService) {
+        if (!this.embeddingJobManager) {
+          fallbackReason = 'embedding_job_manager_missing';
+        } else {
+          const embeddingService = this.embeddingJobManager['embeddingService'];
+          if (!embeddingService) {
+            fallbackReason = 'embedding_service_not_configured';
+          } else {
+            try {
               const queryVector = await embeddingService.generateEmbedding(query);
-              return this.storageProvider.semanticSearch(query, {
-                ...options,
+              const providerResult = await this.storageProvider.semanticSearch(query, {
+                ...normalizedOptions,
                 queryVector,
+              });
+
+              if (providerResult.entities.length === 0) {
+                fallbackReason = fallbackReason || 'no_embeddings_available';
+              } else {
+                semanticResult = providerResult;
+                actualSearchType = normalizedOptions.hybridSearch ? 'hybrid' : 'semantic';
+              }
+            } catch (error) {
+              fallbackReason = 'vector_store_unavailable';
+              logger.warn('Provider semanticSearch failed, falling back to keyword search', {
+                error: error instanceof Error ? error.message : String(error),
+                requestedSearchType,
+                query,
               });
             }
           }
-
-          // Fall back to text search if no embedding service
-          return this.storageProvider.searchNodes(query);
-        } catch (error) {
-          logger.error('Provider semanticSearch failed, falling back to basic search', error);
-          return this.storageProvider.searchNodes(query);
         }
       } else if (this.storageProvider) {
-        // Fall back to searchNodes if semanticSearch is not available in the provider
-        return this.storageProvider.searchNodes(query);
+        fallbackReason = 'vector_store_unavailable';
       }
 
-      // If no storage provider or its semanticSearch is not available, try internal semantic search
-      if (this.embeddingJobManager) {
+      if (!semanticResult && this.embeddingJobManager) {
         try {
-          // Try to use semantic search
-          const results = await this.semanticSearch(query, {
-            hybridSearch: options.hybridSearch || false,
-            limit: options.limit || 10,
-            threshold: options.threshold || options.minSimilarity || 0.5,
-            entityTypes: options.entityTypes || [],
-            facets: options.facets || [],
-            offset: options.offset || 0,
+          const semanticGraph = await this.semanticSearch(query, {
+            hybridSearch: normalizedOptions.hybridSearch || false,
+            limit: normalizedOptions.limit || 10,
+            threshold:
+              normalizedOptions.threshold ?? normalizedOptions.minSimilarity ?? 0.5,
+            entityTypes: normalizedOptions.entityTypes || [],
+            facets: normalizedOptions.facets || [],
+            offset: normalizedOptions.offset || 0,
           });
-
-          return results;
+          semanticResult = semanticGraph;
+          actualSearchType = normalizedOptions.hybridSearch ? 'hybrid' : 'semantic';
         } catch (error) {
-          // Log error but fall back to basic search
-          logger.error('Semantic search failed, falling back to basic search', error);
-
-          // Explicitly call searchNodes if available in the provider
-          if (this.storageProvider) {
-            return (this.storageProvider as StorageProvider).searchNodes(query);
+          if (error instanceof SemanticSearchFallbackError) {
+            fallbackReason = error.reason;
+          } else {
+            fallbackReason = 'query_embedding_failed';
           }
+          logger.warn('Semantic search failed, falling back to keyword search', {
+            fallbackReason,
+            requestedSearchType,
+            query,
+          });
         }
-      } else {
-        logger.warn('Semantic search requested but no embedding capability available');
+      } else if (!semanticResult && !fallbackReason && !this.embeddingJobManager) {
+        fallbackReason = 'embedding_job_manager_missing';
       }
     }
 
-    // Use basic search
-    return this.searchNodes(query);
+    let result = semanticResult;
+
+    if (!result) {
+      result = await this.searchNodes(query);
+      actualSearchType = 'keyword';
+      fallbackReason = fallbackReason ?? 'no_embeddings_available';
+      logger.warn('Falling back to keyword search', {
+        fallbackReason,
+        requestedSearchType,
+      });
+    }
+
+    if (strictMode && requestedSearchType !== 'keyword' && actualSearchType === 'keyword') {
+      const reason = fallbackReason || 'semantic_search_unavailable';
+      throw new Error(`Semantic search unavailable: ${reason}`);
+    }
+
+    const totalTime = Date.now() - startTime;
+    const aggregatedDiagnostics: SearchDiagnostics = {
+      requestedSearchType,
+      actualSearchType,
+    };
+
+    if (fallbackReason) {
+      aggregatedDiagnostics.fallbackReason = fallbackReason;
+    }
+
+    const semanticDiagnostics = result.semanticDiagnostics;
+    if (semanticDiagnostics?.queryVectorGenerationTime !== undefined) {
+      aggregatedDiagnostics.queryVectorGenerationTime =
+        semanticDiagnostics.queryVectorGenerationTime;
+    }
+    if (semanticDiagnostics?.vectorSearchTime !== undefined) {
+      aggregatedDiagnostics.vectorSearchTime = semanticDiagnostics.vectorSearchTime;
+    }
+
+    if (includeDiagnostics) {
+      const stats = await this.computeEntityStats();
+      aggregatedDiagnostics.totalEntities = stats.totalEntities;
+      aggregatedDiagnostics.entitiesWithEmbeddings = stats.entitiesWithEmbeddings;
+      if (stats.totalEntities > 0) {
+        aggregatedDiagnostics.embeddingCoverage =
+          stats.entitiesWithEmbeddings / stats.totalEntities;
+      }
+    }
+
+    return {
+      ...result,
+      timeTaken: totalTime,
+      searchType: actualSearchType,
+      fallbackReason: actualSearchType === 'keyword' ? fallbackReason : undefined,
+      searchDiagnostics: aggregatedDiagnostics,
+    };
   }
 
   /**
@@ -924,21 +1102,18 @@ export class KnowledgeGraphManager {
       offset?: number;
     } = {}
   ): Promise<KnowledgeGraph> {
-    // Find similar entities using vector similarity
     const similarEntities = await this.findSimilarEntities(query, {
       limit: options.limit || 10,
       threshold: options.threshold || 0.5,
     });
 
     if (!similarEntities.length) {
-      return { entities: [], relations: [] };
+      throw new SemanticSearchFallbackError('no_embeddings_available');
     }
 
-    // Get full entity details
     const entityNames = similarEntities.map((e) => e.name);
     const graph = await this.openNodes(entityNames);
 
-    // Add scores to entities for client use
     const scoredEntities = graph.entities.map((entity) => {
       const matchScore = similarEntities.find((e) => e.name === entity.name)?.score || 0;
       return {
@@ -947,17 +1122,28 @@ export class KnowledgeGraphManager {
       };
     });
 
-    // Sort by score descending
     scoredEntities.sort((a, b) => {
       const scoreA = 'score' in a ? (a as Entity & { score: number }).score : 0;
       const scoreB = 'score' in b ? (b as Entity & { score: number }).score : 0;
       return scoreB - scoreA;
     });
 
+    const timingDiagnostics = this.consumeLastSemanticDiagnostics();
+
+    const filteredDiagnostics =
+      timingDiagnostics && Object.keys(timingDiagnostics).length > 0
+        ? {
+            queryVectorGenerationTime: timingDiagnostics.queryVectorGenerationTime,
+            vectorSearchTime: timingDiagnostics.vectorSearchTime,
+          }
+        : undefined;
+
     return {
       entities: scoredEntities,
       relations: graph.relations,
       total: similarEntities.length,
+      diagnostics: filteredDiagnostics ? filteredDiagnostics : undefined,
+      semanticDiagnostics: filteredDiagnostics,
     };
   }
 

@@ -6,6 +6,7 @@ import type { EntityEmbedding } from '../types/entity-embedding.js';
 import { Neo4jJobStore, type EnqueueJobParams, type JobProcessResults, type QueueStatus } from '../storage/neo4j/Neo4jJobStore.js';
 import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
+import { classifyError, ErrorCategory } from '../utils/errors.js';
 
 /**
  * Interface for embedding storage provider, extending the base provider
@@ -60,6 +61,32 @@ interface CachedEmbedding {
   model: string;
 }
 
+type HealthState = 'HEALTHY' | 'DEGRADED' | 'CRITICAL';
+
+export interface HealthStatus {
+  state: HealthState;
+  consecutiveFailures: number;
+  successRate: number;
+  lastSuccessTimestamp: number | null;
+  errorPatterns: Record<ErrorCategory, number>;
+}
+
+const HEALTH_THRESHOLDS = {
+  consecutiveFailuresForDegraded: 5,
+  consecutiveFailuresForCritical: 10,
+  successRateForDegraded: 0.5,
+};
+
+const HEALTH_HISTORY_WINDOW = 100;
+const DEFAULT_MAX_JOB_RETRIES = 3;
+const DEFAULT_LOCK_DURATION_MS = 5 * 60 * 1000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
+
+function parsePositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /**
  * Default logger implementation
  */
@@ -87,6 +114,19 @@ export class Neo4jEmbeddingJobManager {
   private cacheOptions: CacheOptions = { size: 1000, ttl: 3600000 };
   private logger: Logger;
   private workerId: string;
+  private maxJobRetries: number;
+  private jobLockDuration: number;
+  private heartbeatInterval: number;
+  private readonly jobHistory: Array<{ success: boolean; category?: ErrorCategory }> = [];
+  private consecutiveFailures = 0;
+  private errorPatterns: Record<ErrorCategory, number> = {
+    [ErrorCategory.TRANSIENT]: 0,
+    [ErrorCategory.PERMANENT]: 0,
+    [ErrorCategory.CRITICAL]: 0,
+  };
+  private lastHealthState: HealthState = 'HEALTHY';
+  private lastSuccessTimestamp: number | null = null;
+  private jobFailureStreaks = new Map<string, number>();
 
   /**
    * Creates a new Neo4j embedding job manager
@@ -113,6 +153,12 @@ export class Neo4jEmbeddingJobManager {
     this.jobStore = jobStore;
     this.logger = logger || nullLogger;
     this.workerId = workerId || `worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    this.maxJobRetries = parsePositiveNumber(process.env.EMBED_JOB_MAX_RETRIES, DEFAULT_MAX_JOB_RETRIES);
+    this.jobLockDuration = parsePositiveNumber(process.env.EMBED_JOB_LOCK_DURATION_MS, DEFAULT_LOCK_DURATION_MS);
+    this.heartbeatInterval = parsePositiveNumber(
+      process.env.EMBED_JOB_HEARTBEAT_INTERVAL_MS,
+      DEFAULT_HEARTBEAT_INTERVAL_MS
+    );
 
     // Setup rate limiter with defaults
     const defaultRateLimiter = {
@@ -154,6 +200,9 @@ export class Neo4jEmbeddingJobManager {
       cacheTtl: this.cacheOptions.ttl,
       rateLimit: `${this.rateLimiter.tokensPerInterval} per ${this.rateLimiter.interval}ms`,
       workerId: this.workerId,
+      maxJobRetries: this.maxJobRetries,
+      jobLockDuration: this.jobLockDuration,
+      heartbeatInterval: this.heartbeatInterval,
     });
   }
 
@@ -182,6 +231,7 @@ export class Neo4jEmbeddingJobManager {
       model: modelInfo.name,
       version: String(entity.version ?? 1),
       priority,
+      max_attempts: this.maxJobRetries,
     };
 
     const jobId = await this.jobStore.enqueueJob(jobParams);
@@ -210,132 +260,169 @@ export class Neo4jEmbeddingJobManager {
    * @param lockDuration - How long to lock jobs for processing (default: 5 minutes)
    * @returns Result statistics
    */
-  async processJobs(batchSize = 10, lockDuration = 5 * 60 * 1000): Promise<JobProcessResults> {
-    this.logger.info('Starting job processing', { batchSize, lockDuration });
+  async processJobs(batchSize = 10, lockDuration?: number): Promise<JobProcessResults> {
+    const effectiveLockDuration = lockDuration ?? this.jobLockDuration;
 
-    // Lease jobs for processing
-    const leasedJobs = await this.jobStore.leaseJobs(batchSize, this.workerId, lockDuration);
-    this.logger.debug('Leased jobs for processing', { count: leasedJobs.length });
+    this.logger.info('Starting job processing', {
+      batchSize,
+      lockDuration: effectiveLockDuration,
+      workerId: this.workerId,
+    });
 
-    // Initialize counters
+    const leasedJobs = await this.jobStore.leaseJobs(batchSize, this.workerId, effectiveLockDuration);
+    this.logger.debug('Leased jobs for processing', {
+      count: leasedJobs.length,
+      lockDuration: effectiveLockDuration,
+    });
+
     const result: JobProcessResults = {
       processed: 0,
       successful: 0,
       failed: 0,
     };
 
-    // Process each leased job
-    for (const job of leasedJobs) {
-      // Check rate limiter before processing
-      const rateLimitCheck = this._checkRateLimiter();
-      if (!rateLimitCheck.success) {
-        this.logger.warn('Rate limit reached, pausing job processing', {
-          remaining: leasedJobs.length - result.processed,
-        });
-        break; // Stop processing jobs if rate limit is reached
-      }
+    const activeJobIds = new Set<string>();
+    let heartbeatTimer: NodeJS.Timeout | undefined;
 
-      this.logger.info('Processing embedding job', {
-        jobId: job.id,
-        entityName: job.entity_uid,
-        attempt: job.attempts,
-        maxAttempts: job.max_attempts,
-      });
-
-      try {
-        // Get the entity
-        const entity = await this.storageProvider.getEntity(job.entity_uid);
-
-        if (!entity) {
-          throw new Error(`Entity ${job.entity_uid} not found`);
+    if (leasedJobs.length > 0) {
+      heartbeatTimer = setInterval(() => {
+        if (activeJobIds.size === 0) {
+          return;
         }
 
-        // Log entity details for debugging
-        this.logger.debug('Retrieved entity for embedding', {
-          entityName: job.entity_uid,
-          entityType: entity.entityType,
-          hasObservations: entity.observations ? 'yes' : 'no',
-          observationsType: entity.observations ? typeof entity.observations : 'undefined',
-          observationsLength:
-            entity.observations && Array.isArray(entity.observations)
-              ? entity.observations.length
-              : 'n/a',
-        });
+        void this.jobStore
+          .heartbeatJobs(Array.from(activeJobIds), this.workerId, effectiveLockDuration)
+          .catch((heartbeatError) => {
+            this.logger.warn('Heartbeat failed for active jobs', {
+              error: heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError),
+              workerId: this.workerId,
+              activeJobCount: activeJobIds.size,
+            });
+          });
+      }, this.heartbeatInterval);
+    }
 
-        // Prepare text for embedding
-        const text = this._prepareEntityText(entity);
-
-        // Try to get from cache or generate new embedding
-        this.logger.debug('Generating embedding for entity', { entityName: job.entity_uid });
-        const embedding = await this._getCachedEmbeddingOrGenerate(text);
-
-        // Store the embedding with the entity
-        this.logger.debug('Storing entity vector', {
-          entityName: job.entity_uid,
-          vectorLength: embedding.length,
-          model: job.model,
-        });
-
-        await this.storageProvider.storeEntityVector(job.entity_uid, {
-          vector: embedding,
-          model: job.model,
-          lastUpdated: Date.now(),
-        });
-
-        // Complete the job
-        const completed = await this.jobStore.completeJob(job.id, this.workerId);
-        if (!completed) {
-          this.logger.warn('Failed to mark job as completed', { jobId: job.id });
+    try {
+      for (const job of leasedJobs) {
+        const rateLimitCheck = this._checkRateLimiter();
+        if (!rateLimitCheck.success) {
+          this.logger.warn('Rate limit reached, pausing job processing', {
+            remainingJobs: leasedJobs.length - result.processed,
+            workerId: this.workerId,
+          });
+          break;
         }
 
-        this.logger.info('Successfully processed embedding job', {
+        activeJobIds.add(job.id);
+
+        this.logger.info('Processing embedding job', {
           jobId: job.id,
           entityName: job.entity_uid,
-          model: job.model,
-          dimensions: embedding.length,
-        });
-
-        result.successful++;
-      } catch (error: unknown) {
-        // Handle failures
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const errorStack = error instanceof Error ? error.stack : undefined;
-
-        this.logger.error('Failed to process embedding job', {
-          jobId: job.id,
-          entityName: job.entity_uid,
-          error: errorMessage,
-          errorStack,
           attempt: job.attempts,
           maxAttempts: job.max_attempts,
         });
 
-        // Fail the job (this will mark as failed or retry based on attempts)
-        const failed = await this.jobStore.failJob(job.id, this.workerId, errorMessage);
-        if (!failed) {
-          this.logger.warn('Failed to mark job as failed', { jobId: job.id });
+        try {
+          const entity = await this.storageProvider.getEntity(job.entity_uid);
+
+          if (!entity) {
+            throw new Error(`Entity ${job.entity_uid} not found`);
+          }
+
+          this.logger.debug('Retrieved entity for embedding', {
+            entityName: job.entity_uid,
+            entityType: entity.entityType,
+            hasObservations: entity.observations ? 'yes' : 'no',
+            observationsType: entity.observations ? typeof entity.observations : 'undefined',
+            observationsLength:
+              entity.observations && Array.isArray(entity.observations)
+                ? entity.observations.length
+                : 'n/a',
+          });
+
+          const text = this._prepareEntityText(entity);
+
+          this.logger.debug('Generating embedding for entity', { entityName: job.entity_uid });
+          const embedding = await this._getCachedEmbeddingOrGenerate(text);
+
+          this.logger.debug('Storing entity vector', {
+            entityName: job.entity_uid,
+            vectorLength: embedding.length,
+            model: job.model,
+          });
+
+          await this.storageProvider.storeEntityVector(job.entity_uid, {
+            vector: embedding,
+            model: job.model,
+            lastUpdated: Date.now(),
+          });
+
+          const completed = await this.jobStore.completeJob(job.id, this.workerId);
+          if (!completed) {
+            this.logger.warn('Failed to mark job as completed', { jobId: job.id });
+          }
+
+          this.recordJobResult(true);
+          this.jobFailureStreaks.delete(job.id);
+          this.logger.info('Successfully processed embedding job', {
+            jobId: job.id,
+            entityName: job.entity_uid,
+            model: job.model,
+            dimensions: embedding.length,
+          });
+
+          result.successful++;
+        } catch (error: unknown) {
+          const category = classifyError(error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorStack = error instanceof Error ? error.stack : undefined;
+          const failureStreak = this.incrementJobFailureStreak(job.id);
+
+          this.logger.error('Failed to process embedding job', {
+            jobId: job.id,
+            entityName: job.entity_uid,
+            error: errorMessage,
+            errorStack,
+            attempt: job.attempts,
+            maxAttempts: job.max_attempts,
+            errorCategory: category,
+            failureStreak,
+            rateLimiter: {
+              tokens: this.rateLimiter.tokens,
+              maxTokens: this.rateLimiter.tokensPerInterval,
+              nextRefillInMs: Math.max(
+                0,
+                this.rateLimiter.interval - (Date.now() - this.rateLimiter.lastRefill)
+              ),
+            },
+          });
+
+          const failed = await this.jobStore.failJob(job.id, this.workerId, errorMessage, {
+            category,
+            stack: errorStack,
+            permanent: category !== ErrorCategory.TRANSIENT,
+          });
+
+          if (!failed) {
+            this.logger.warn('Failed to mark job as failed', { jobId: job.id });
+          }
+
+          this.recordJobResult(false, category);
+          result.failed++;
+
+          if (category === ErrorCategory.CRITICAL) {
+            throw error;
+          }
+        } finally {
+          activeJobIds.delete(job.id);
+          result.processed++;
         }
-
-        result.failed++;
       }
-
-      result.processed++;
+    } finally {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+      }
     }
-
-    // Send heartbeat for any remaining leased jobs (in case of early termination)
-    if (leasedJobs.length > result.processed) {
-      const remainingJobIds = leasedJobs.slice(result.processed).map(job => job.id);
-      await this.jobStore.heartbeatJobs(remainingJobIds, this.workerId, lockDuration);
-    }
-
-    // Log job processing results
-    const queueStatus = await this.jobStore.getQueueStatus();
-    this.logger.info('Job processing complete', {
-      processed: result.processed,
-      successful: result.successful,
-      failed: result.failed,
-      remaining: queueStatus.pending,
-    });
 
     return result;
   }
@@ -373,6 +460,91 @@ export class Neo4jEmbeddingJobManager {
       retentionDays
     });
     return deletedCount;
+  }
+
+  getHealthStatus(): HealthStatus {
+    const successRate = this.computeSuccessRate();
+    const state = this.determineHealthState(successRate);
+    return {
+      state,
+      consecutiveFailures: this.consecutiveFailures,
+      successRate,
+      lastSuccessTimestamp: this.lastSuccessTimestamp,
+      errorPatterns: { ...this.errorPatterns },
+    };
+  }
+
+  private recordJobResult(success: boolean, category?: ErrorCategory): void {
+    if (success) {
+      this.lastSuccessTimestamp = Date.now();
+      this.consecutiveFailures = 0;
+    } else {
+      const actualCategory = category ?? ErrorCategory.PERMANENT;
+      this.errorPatterns[actualCategory] = (this.errorPatterns[actualCategory] ?? 0) + 1;
+      this.consecutiveFailures += 1;
+    }
+
+    this.jobHistory.push({ success, category });
+    if (this.jobHistory.length > HEALTH_HISTORY_WINDOW) {
+      this.jobHistory.shift();
+    }
+
+    this.logHealthTransition();
+  }
+
+  private computeSuccessRate(): number {
+    if (this.jobHistory.length === 0) {
+      return 1;
+    }
+
+    const successCount = this.jobHistory.filter((entry) => entry.success).length;
+    return successCount / this.jobHistory.length;
+  }
+
+  private determineHealthState(successRate: number): HealthState {
+    if (this.consecutiveFailures >= HEALTH_THRESHOLDS.consecutiveFailuresForCritical) {
+      return 'CRITICAL';
+    }
+
+    if (
+      this.consecutiveFailures >= HEALTH_THRESHOLDS.consecutiveFailuresForDegraded ||
+      successRate < HEALTH_THRESHOLDS.successRateForDegraded
+    ) {
+      return 'DEGRADED';
+    }
+
+    return 'HEALTHY';
+  }
+
+  private logHealthTransition(): void {
+    const successRate = this.computeSuccessRate();
+    const newState = this.determineHealthState(successRate);
+    if (newState === this.lastHealthState) {
+      return;
+    }
+
+    const logContext = {
+      state: newState,
+      consecutiveFailures: this.consecutiveFailures,
+      successRate,
+      lastSuccessTimestamp: this.lastSuccessTimestamp,
+    };
+
+    if (newState === 'HEALTHY') {
+      this.logger.info('Job processor health restored', logContext);
+    } else if (newState === 'DEGRADED') {
+      this.logger.warn('Job processor health degraded', logContext);
+    } else {
+      this.logger.error('Job processor health critical', logContext);
+    }
+
+    this.lastHealthState = newState;
+  }
+
+  private incrementJobFailureStreak(jobId: string): number {
+    const next = (this.jobFailureStreaks.get(jobId) ?? 0) + 1;
+    this.jobFailureStreaks.set(jobId, next);
+    return next;
   }
 
   /**

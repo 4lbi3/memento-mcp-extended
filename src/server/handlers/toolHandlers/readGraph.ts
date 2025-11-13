@@ -1,4 +1,5 @@
 import type { KnowledgeGraphManager } from '../../../KnowledgeGraphManager.js';
+import { formatKnowledgeGraphForDisplay } from '../utils/graphFormatter.js';
 
 /**
  * Handles the read_graph tool request
@@ -16,7 +17,7 @@ export async function handleReadGraph(
     content: [
       {
         type: 'text',
-        text: JSON.stringify(result, null, 2),
+        text: formatKnowledgeGraphForDisplay(result),
       },
     ],
   };

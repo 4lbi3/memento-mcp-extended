@@ -91,6 +91,7 @@ describe('Neo4jEmbeddingJobManager', () => {
         model: 'test-model',
         version: '1',
         priority: 1,
+        max_attempts: 3,
       });
       expect(result).toBe('job-123');
     });
@@ -170,7 +171,11 @@ describe('Neo4jEmbeddingJobManager', () => {
 
       const result = await jobManager.processJobs(10);
 
-      expect(mockJobStore.failJob).toHaveBeenCalledWith('job-1', 'test-worker', 'Entity not found');
+      expect(mockJobStore.failJob).toHaveBeenCalledWith('job-1', 'test-worker', 'Entity not found', {
+        category: 'permanent',
+        stack: expect.stringContaining('Entity not found'),
+        permanent: true,
+      });
       expect(result.processed).toBe(1);
       expect(result.successful).toBe(0);
       expect(result.failed).toBe(1);
@@ -254,6 +259,75 @@ describe('Neo4jEmbeddingJobManager', () => {
 
       const status2 = jobManager.getRateLimiterStatus();
       expect(status2.availableTokens).toBe(status1.availableTokens - 1);
+    });
+  });
+
+  describe('health monitoring', () => {
+    it('degrades after failure and recovers on success', async () => {
+      const failedJob = {
+        id: 'job-health',
+        entity_uid: 'TestEntity',
+        model: 'test-model',
+        version: '1',
+        status: 'processing',
+        priority: 1,
+        created_at: Date.now(),
+        attempts: 1,
+        max_attempts: 3,
+        lock_owner: 'test-worker',
+        lock_until: Date.now() + 300000,
+      };
+
+      mockJobStore.leaseJobs.mockResolvedValue([failedJob]);
+      mockStorageProvider.getEntity.mockRejectedValue(new Error('Entity not found'));
+      mockJobStore.failJob.mockResolvedValue(true);
+
+      const failureResult = await jobManager.processJobs(10);
+      expect(failureResult.failed).toBe(1);
+
+      const degraded = jobManager.getHealthStatus();
+      expect(degraded.state).toBe('DEGRADED');
+      expect(degraded.consecutiveFailures).toBe(1);
+      expect(degraded.successRate).toBe(0);
+
+      mockStorageProvider.getEntity.mockResolvedValue(mockEntity);
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockJobStore.completeJob.mockResolvedValue(true);
+      mockJobStore.leaseJobs.mockResolvedValue([failedJob]);
+
+      const successResult = await jobManager.processJobs(10);
+      expect(successResult.successful).toBe(1);
+
+      const healthy = jobManager.getHealthStatus();
+      expect(healthy.state).toBe('HEALTHY');
+      expect(healthy.consecutiveFailures).toBe(0);
+      expect(healthy.successRate).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it('escalates to critical after repeated failures', async () => {
+      const repeatJob = {
+        id: 'job-critical',
+        entity_uid: 'TestEntity',
+        model: 'test-model',
+        version: '1',
+        status: 'processing',
+        priority: 1,
+        created_at: Date.now(),
+        attempts: 1,
+        max_attempts: 3,
+        lock_owner: 'test-worker',
+        lock_until: Date.now() + 300000,
+      };
+
+      mockJobStore.leaseJobs.mockResolvedValue([repeatJob]);
+      mockStorageProvider.getEntity.mockRejectedValue(new Error('Entity missing'));
+      mockJobStore.failJob.mockResolvedValue(true);
+
+      for (let i = 0; i < 10; i += 1) {
+        await jobManager.processJobs(10);
+      }
+
+      expect(jobManager.getHealthStatus().state).toBe('CRITICAL');
     });
   });
 });

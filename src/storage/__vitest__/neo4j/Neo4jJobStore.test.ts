@@ -161,8 +161,14 @@ describe('Neo4jJobStore', () => {
           jobId: 'job-1',
           lockOwner: 'worker-1',
           error: 'Test error',
+          errorCategory: null,
+          errorStack: null,
+          permanent: false,
         })
       );
+      const query = connectionManager.executeQuery.mock.calls[0][0] as string;
+      expect(query).toContain('job.error_category = $errorCategory');
+      expect(query).toContain('WHEN $permanent OR job.attempts >= job.max_attempts');
     });
   });
 

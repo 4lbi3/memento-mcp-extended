@@ -17,7 +17,7 @@ export function setupServer(knowledgeGraphManager: KnowledgeGraphManager): Serve
       name: 'memento-mcp',
       version: '1.0.0',
       description: 'Memento MCP: Your persistent knowledge graph memory system',
-      publisher: 'gannonh',
+      publisher: '4lbi3',
     },
     {
       capabilities: {

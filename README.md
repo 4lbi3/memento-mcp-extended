@@ -6,8 +6,8 @@ Scalable, high performance knowledge graph memory system with semantic retrieval
 
 > **Fork note**: this repository is a fork committed to continuing the development and improvement of Memento MCP, staying compatible with upstream while introducing additional enhancements and fixes.
 
-[![Memento MCP Tests](https://github.com/gannonh/memento-mcp/actions/workflows/memento-mcp.yml/badge.svg)](https://github.com/gannonh/memento-mcp/actions/workflows/memento-mcp.yml)
-[![smithery badge](https://smithery.ai/badge/@gannonh/memento-mcp)](https://smithery.ai/server/@gannonh/memento-mcp)
+[![Memento MCP Tests](https://github.com/4lbi3/memento-mcp-extended/actions/workflows/memento-mcp.yml/badge.svg)](https://github.com/4lbi3/memento-mcp-extended/actions/workflows/memento-mcp.yml)
+[![smithery badge](https://smithery.ai/badge/@4lbi3/memento-mcp-extended)](https://smithery.ai/server/@4lbi3/memento-mcp-extended)
 
 ## Core Concepts
 
@@ -161,6 +161,14 @@ DETACH DELETE job;
 ```
 
 These same cleanup routines are also exposed programmatically via `Neo4jJobStore.cleanupJobs()`.
+
+## Error Handling and Monitoring
+
+Error handling now flows through a shared classification layer (`ErrorCategory`) so workers can distinguish transient outages, permanent data problems, and critical Neo4j failures before retrying or escalating. Every failure log includes contextual metadata (job ID, entity name, error category, stack trace, rate limiter state), and failed jobs are stored with `error_category`/`error_stack`/`permanent` markers in Neo4j for easier triage.
+
+The embedding processor publishes a `/health` endpoint (configurable via `HEALTH_PORT`) that surfaces consecutive failure counts, success rate, and the current health state (`HEALTHY`, `DEGRADED`, or `CRITICAL`) so you can hook it into monitoring dashboards or synthetic checks.
+
+Search operations now return `searchType`, `fallbackReason`, and diagnostics (embedding coverage, query/vector timing, requested vs actual search path), and a strict mode prevents semantic fallback when semantic results are explicitly required. Clients can use `fallbackReason` and the diagnostics payload to notify users when keyword search replaces semantic matching, improving transparency in degraded scenarios.
 
 ### Neo4j Desktop Setup (Recommended)
 
@@ -548,6 +556,9 @@ MEMORY_STORAGE_TYPE=neo4j
 OPENAI_API_KEY=your-openai-api-key
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 
+# Health server port (must match your environment; defaults to 3001 if unset)
+HEALTH_PORT=3001
+
 # Debug Settings
 DEBUG=true
 ```
@@ -651,7 +662,7 @@ Add this to your `claude_desktop_config.json`:
   "mcpServers": {
     "memento": {
       "command": "npx",
-      "args": ["-y", "@gannonh/memento-mcp"],
+      "args": ["-y", "@4lbi3/memento-mcp-extended"],
       "env": {
         "MEMORY_STORAGE_TYPE": "neo4j",
         "NEO4J_URI": "bolt://127.0.0.1:7687",
@@ -662,6 +673,7 @@ Add this to your `claude_desktop_config.json`:
         "NEO4J_VECTOR_DIMENSIONS": "1536",
         "NEO4J_SIMILARITY_FUNCTION": "cosine",
         "EMBED_JOB_RETENTION_DAYS": "14",
+        "HEALTH_PORT": "3001",
         "OPENAI_API_KEY": "your-openai-api-key",
         "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
         "DEBUG": "true"
@@ -689,6 +701,7 @@ Alternatively, for local development, you can use:
         "NEO4J_VECTOR_DIMENSIONS": "1536",
         "NEO4J_SIMILARITY_FUNCTION": "cosine",
         "EMBED_JOB_RETENTION_DAYS": "14",
+        "HEALTH_PORT": "3001",
         "OPENAI_API_KEY": "your-openai-api-key",
         "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
         "DEBUG": "true"
@@ -800,8 +813,8 @@ npm run neo4j:init
 
 ```bash
 # Clone the repository
-git clone https://github.com/gannonh/memento-mcp.git
-cd memento-mcp
+git clone https://github.com/4lbi3/memento-mcp-extended.git
+cd memento-mcp-extended
 
 # Install dependencies
 npm install
@@ -820,10 +833,10 @@ npm run test:coverage
 
 ### Installing via Smithery
 
-To install memento-mcp for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@gannonh/memento-mcp):
+To install the fork via [Smithery](https://smithery.ai/server/@4lbi3/memento-mcp-extended) (replace the package if you have a custom listing):
 
 ```bash
-npx -y @smithery/cli install @gannonh/memento-mcp --client claude
+npx -y @smithery/cli install @4lbi3/memento-mcp-extended --client claude
 ```
 
 ### Global Installation with npx
@@ -831,7 +844,7 @@ npx -y @smithery/cli install @gannonh/memento-mcp --client claude
 You can run Memento MCP directly using npx without installing it globally:
 
 ```bash
-npx -y @gannonh/memento-mcp
+npx -y @4lbi3/memento-mcp-extended
 ```
 
 This method is recommended for use with Claude Desktop and other MCP-compatible clients.
@@ -842,11 +855,11 @@ For development or contributing to the project:
 
 ```bash
 # Install locally
-npm install @gannonh/memento-mcp
+npm install @4lbi3/memento-mcp-extended
 
 # Or clone the repository
-git clone https://github.com/gannonh/memento-mcp.git
-cd memento-mcp
+git clone https://github.com/4lbi3/memento-mcp-extended.git
+cd memento-mcp-extended
 npm install
 ```
 

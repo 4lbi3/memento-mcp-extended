@@ -11,6 +11,9 @@ import { createJobDatabaseConnectionManager } from './storage/neo4j/Neo4jConnect
 import { DEFAULT_NEO4J_CONFIG, validateNeo4jConfig } from './storage/neo4j/Neo4jConfig.js';
 import { ensureJobDatabasePrepared } from './storage/neo4j/JobDatabaseInitializer.js';
 import { logger } from './utils/logger.js';
+import { classifyError, ErrorCategory } from './utils/errors.js';
+import { calculateRetryDelay, DEFAULT_RETRY_POLICY, type RetryPolicy } from './utils/retry.js';
+import { startHealthServer } from './server/health.js';
 
 // Re-export the types and classes for use in other modules
 export * from './KnowledgeGraphManager.js';
@@ -19,6 +22,74 @@ export { RelationMetadata, Relation } from './types/relation.js';
 
 // Initialize storage and create KnowledgeGraphManager
 const storageProvider = initializeStorageProvider();
+
+function parsePositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const JOB_RETRY_POLICY: RetryPolicy = {
+  baseDelayMs: parsePositiveNumber(
+    process.env.EMBED_JOB_RETRY_BASE_DELAY_MS,
+    DEFAULT_RETRY_POLICY.baseDelayMs
+  ),
+  maxDelayMs: parsePositiveNumber(
+    process.env.EMBED_JOB_RETRY_MAX_DELAY_MS,
+    DEFAULT_RETRY_POLICY.maxDelayMs
+  ),
+  multiplier: parsePositiveNumber(
+    process.env.EMBED_JOB_RETRY_MULTIPLIER,
+    DEFAULT_RETRY_POLICY.multiplier
+  ),
+  jitterFactor: parsePositiveNumber(
+    process.env.EMBED_JOB_RETRY_JITTER_FACTOR,
+    DEFAULT_RETRY_POLICY.jitterFactor
+  ),
+};
+
+const EMBEDDING_PROCESS_INTERVAL = 10000;
+const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function runRecurringTask(taskName: string, interval: number, task: () => Promise<void>) {
+  let transientAttempts = 0;
+
+  while (true) {
+    try {
+      await task();
+      transientAttempts = 0;
+    } catch (error: unknown) {
+      const category = classifyError(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`${taskName} failed`, { error: errorMessage, category });
+
+      if (category === ErrorCategory.TRANSIENT) {
+        transientAttempts += 1;
+        const delay = calculateRetryDelay(transientAttempts, JOB_RETRY_POLICY);
+        logger.warn(`${taskName} will retry after transient failure`, {
+          attempt: transientAttempts,
+          delay,
+          category,
+        });
+        await wait(delay);
+        continue;
+      }
+
+      if (category === ErrorCategory.CRITICAL) {
+        logger.error(`${taskName} halted due to a critical error`, {
+          error: errorMessage,
+          category,
+        });
+        break;
+      }
+
+      transientAttempts = 0;
+    }
+
+    await wait(interval);
+  }
+}
 
 // Validate Neo4j configuration at startup
 const neo4jConfig = DEFAULT_NEO4J_CONFIG;
@@ -153,42 +224,37 @@ try {
     logger
   );
 
-  // Schedule periodic processing for embedding jobs
-  const EMBEDDING_PROCESS_INTERVAL = 10000; // 10 seconds - more frequent processing
-  setInterval(async () => {
-    try {
-      // Process pending embedding jobs
-      await embeddingJobManager?.processJobs(10);
-    } catch (error) {
-      // Log error but don't crash
-      logger.error('Error in scheduled job processing', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-    }
-  }, EMBEDDING_PROCESS_INTERVAL);
+  const shouldStartBackgroundTasks =
+    !process.env.VITEST && !process.env.NODE_ENV?.includes('test');
 
-  // Schedule periodic cleanup for completed/failed jobs
-  const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // Daily cleanup
-  setInterval(async () => {
-    try {
-      // Clean up old jobs based on retention policy
+  if (shouldStartBackgroundTasks) {
+    void runRecurringTask('embedding job processing', EMBEDDING_PROCESS_INTERVAL, async () => {
+      if (!embeddingJobManager) {
+        logger.warn('Skipping job processing; manager not initialized');
+        return;
+      }
+      await embeddingJobManager.processJobs(10);
+    });
+
+    void runRecurringTask('embedding job cleanup', CLEANUP_INTERVAL, async () => {
+      if (!embeddingJobManager) {
+        logger.warn('Skipping job cleanup; manager not initialized');
+        return;
+      }
       const retentionDays = neo4jConfig.embedJobRetentionDays || 14;
-      const deletedCount = await embeddingJobManager?.cleanupJobs(retentionDays);
+      const deletedCount = await embeddingJobManager.cleanupJobs(retentionDays);
       if (deletedCount && deletedCount > 0) {
         logger.info('Scheduled job cleanup completed', {
           deletedCount,
           retentionDays,
         });
       }
-    } catch (error) {
-      // Log error but don't crash
-      logger.error('Error in scheduled job cleanup', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-    }
-  }, CLEANUP_INTERVAL);
+    });
+
+    startHealthServer(embeddingJobManager);
+  } else {
+    logger.debug('Background job loops disabled in test environment');
+  }
 } catch (error) {
   // Fail gracefully if embedding job manager initialization fails
   logger.error('Failed to initialize Neo4jEmbeddingJobManager', {

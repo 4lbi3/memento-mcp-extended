@@ -13,7 +13,7 @@ vi.mock('@modelcontextprotocol/sdk/server/index.js', () => {
           name: 'memento-mcp',
           version: '1.0.0',
           description: 'Memento MCP: Your persistent knowledge graph memory system',
-          publisher: 'gannonh',
+      publisher: '4lbi3',
         },
         _options: {
           capabilities: {
@@ -108,7 +108,7 @@ describe('setupServer', () => {
         name: 'memento-mcp',
         version: '1.0.0',
         description: 'Memento MCP: Your persistent knowledge graph memory system',
-        publisher: 'gannonh',
+        publisher: '4lbi3',
       },
       {
         capabilities: {
