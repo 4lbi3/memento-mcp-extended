@@ -29,7 +29,7 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
                   items: {
                     type: 'string',
                   },
-                  description: 'An array of observation contents associated with the entity',
+                  description: 'Array of observations. CRITICAL: Include the original verbose sentence for context in the SAME LANGUAGE as the user input AND specific atomic facts. This hybrid approach is essential for semantic search.',
                 },
                 // Temporal fields - optional
                 id: { type: 'string', description: 'Optional entity ID' },
@@ -120,7 +120,7 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
                 contents: {
                   type: 'array',
                   items: { type: 'string' },
-                  description: 'An array of observation contents to add',
+                  description: 'Array of new observations. CRITICAL: Include the original verbose sentence for context in the SAME LANGUAGE as the user input AND specific atomic facts. This hybrid approach is essential for semantic search.',
                 },
                 // Optional parameters at the observation level
                 strength: {

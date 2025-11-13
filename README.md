@@ -709,6 +709,7 @@ You have access to the Memento MCP knowledge graph memory system, which provides
 Your memory tools are provided by Memento MCP, a sophisticated knowledge graph implementation.
 When asked about past conversations or user information, always check the Memento MCP knowledge graph first.
 You should use semantic_search to find relevant information in your memory when answering questions.
+Store information in the same language as the user.
 ```
 
 ### Testing Semantic Search
