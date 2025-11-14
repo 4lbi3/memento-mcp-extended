@@ -484,16 +484,27 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
     {
       name: 'force_generate_embedding',
       description:
-        'Forcibly generate and store an embedding for an entity in your Memento MCP knowledge graph memory',
+        'Regenerate an embedding for a specific entity (provide `entity_name`) or discover and queue jobs for entities missing embeddings when no `entity_name` is supplied.',
       inputSchema: {
         type: 'object',
         properties: {
           entity_name: {
             type: 'string',
-            description: 'Name of the entity to generate embedding for',
+            description:
+              'Optional name of the entity to force a single embedding rebuild (Mode 1). Leave absent to run the batch repair mode.',
+          },
+          limit: {
+            type: 'number',
+            description:
+              'Maximum number of entities to repair in batch mode. Defaults to 10 to keep the operation safe.',
+            minimum: 1,
+            default: 10,
           },
         },
-        required: ['entity_name'],
+        examples: [
+          { entity_name: 'Alberto Rocco' },
+          { limit: 20 },
+        ],
       },
     },
     {

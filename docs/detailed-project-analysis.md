@@ -62,7 +62,7 @@ This is the core business logic component that orchestrates all knowledge graph 
 interface KnowledgeGraphManagerOptions {
   storageProvider?: StorageProvider;
   memoryFilePath?: string;
-  embeddingJobManager?: EmbeddingJobManager;
+  embeddingJobManager?: Neo4jEmbeddingJobManager;
   vectorStoreOptions?: VectorStoreFactoryOptions;
 }
 ```
@@ -100,13 +100,37 @@ interface KnowledgeGraphManagerOptions {
 
 #### Vector Store Integration:
 ```typescript
+private async initializeVectorStore(options: VectorStoreFactoryOptions): Promise<void> {
+  try {
+    const factoryOptions = {
+      ...options,
+      initializeImmediately: true,
+    };
+
+    this.vectorStore = await VectorStoreFactory.createVectorStore(factoryOptions);
+    logger.info('Vector store initialized successfully');
+  } catch (error) {
+    logger.error('Failed to initialize vector store', error);
+    throw error;
+  }
+}
+
 private async ensureVectorStore(): Promise<VectorStore> {
   if (!this.vectorStore) {
-    const vectorStore = await VectorStoreFactory.createVectorStore(this.storageProvider.vectorStoreOptions);
-    // Initialize with existing entity embeddings
-    await this.initializeVectorStoreWithExistingEntities(vectorStore);
-    return vectorStore;
+    if (this.storageProvider && 'vectorStoreOptions' in this.storageProvider) {
+      await this.initializeVectorStore(
+        (this.storageProvider as unknown as { vectorStoreOptions: VectorStoreFactoryOptions })
+          .vectorStoreOptions
+      );
+
+      if (!this.vectorStore) {
+        throw new Error('Failed to initialize vector store');
+      }
+    } else {
+      throw new Error('Vector store is not initialized and no options are available');
+    }
   }
+
   return this.vectorStore;
 }
 ```
@@ -134,6 +158,12 @@ interface Neo4jStorageProviderOptions {
   };
 }
 ```
+
+#### Discovering Entities Without Embeddings
+
+- `StorageProvider` now exposes `getEntitiesWithoutEmbeddings(limit?)` so diagnostics can iterate over nodes that still lack embeddings without scanning the entire graph.
+- `FileStorageProvider` filters the in-memory graph for entities that do not have an `embedding` property (skipping versions with a non-null `validTo`) and returns up to the requested `limit` (default 10).
+- `Neo4jStorageProvider` runs a bounded Cypher query (`MATCH (e:Entity) WHERE e.embedding IS NULL AND e.validTo IS NULL RETURN e LIMIT $limit`) with the supplied `limit` coerced to a positive integer (minimum 1, default 10), returning hydrated `Entity` objects.
 
 #### Schema Management (`src/storage/neo4j/Neo4jSchemaManager.ts`)
 
@@ -203,28 +233,51 @@ private tokensPerInterval: number;
 private interval: number;
 ```
 
-#### Embedding Job Manager (`src/embeddings/EmbeddingJobManager.ts`)
+#### Embedding Job Manager (`src/embeddings/Neo4jEmbeddingJobManager.ts` / `src/storage/neo4j/Neo4jJobStore.ts`)
 
-**Job Processing Architecture:**
-```sql
-CREATE TABLE embedding_jobs (
-  id TEXT PRIMARY KEY,
-  entity_name TEXT NOT NULL,
-  status TEXT NOT NULL, -- 'pending', 'processing', 'completed', 'failed'
-  priority INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL,
-  processed_at INTEGER,
-  error TEXT,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  max_attempts INTEGER NOT NULL DEFAULT 3
-);
+`Neo4jEmbeddingJobManager` is the single embedding-loop implementation that pairs an OpenAI-backed `EmbeddingService` with a Neo4j-based job queue. It delegates queue persistence and locking to `Neo4jJobStore`, which keeps every pending/processing job as an `EmbedJob` node in the job database.
+
+**EmbedJob lattice (excerpt from `Neo4jJobStore.enqueueJob`)**:
+```cypher
+MERGE (job:EmbedJob {
+  entity_uid: $entity_uid,
+  model: $model,
+  version: $version
+})
+ON CREATE SET
+  job.id = randomUUID(),
+  job.status = 'pending',
+  job.priority = toInteger($priority),
+  job.created_at = timestamp(),
+  job.attempts = 0,
+  job.max_attempts = toInteger($max_attempts),
+  job.error = null,
+  job.error_category = null,
+  job.error_stack = null,
+  job.processed_at = null,
+  job.lock_owner = null,
+  job.lock_until = null
+ON MATCH SET
+  job.status = CASE
+    WHEN job.status = 'failed' THEN 'pending'
+    ELSE job.status
+  END
+RETURN job.id, job.status
 ```
 
-**Processing Logic:**
-1. **Priority Queue**: Higher priority jobs processed first
-2. **Retry Mechanism**: Failed jobs automatically retried up to 3 times
-3. **Caching**: LRU cache prevents redundant API calls
-4. **Background Processing**: Non-blocking job execution
+The job store also exposes leasing (`leaseJobs`), heartbeat extensions, success/failure transitions, retrying of permanently failed jobs, queue statistics, and cleanup helpers that either delete old jobs via direct Cypher or fall back to `apoc.periodic.iterate`.
+
+**Processing logic**:
+- `scheduleEntityEmbedding()` validates that the target entity exists, fetches the active model from `EmbeddingServiceFactory`, and enqueues a job with the configured priority/`max_attempts`. Duplicate jobs are prevented by the entity+model+version MERGE key, and repeated failures cycle the job back to `pending`.
+- `processJobs()` is invoked every 10 s via `runRecurringTask` (see `src/index.ts`), leases up to `batchSize` jobs, and enforces the token-bucket rate limiter (default 60 tokens / minute). Each job text is derived by `_prepareEntityText()`, optionally deduplicated by `_getCachedEmbeddingOrGenerate()`, and then written back through `storageProvider.storeEntityVector`.
+- Failures are classified with `classifyError` to populate `ErrorCategory` metadata, spilled to `Neo4jJobStore.failJob`, and recorded in the manager’s health rollups. Successes call `jobStore.completeJob`, clear failure streaks, and update the LRU cache.
+- Heartbeats (`heartbeatJobs`) extend locks while a batch runs, preventing other workers from stealing in-flight jobs. The manager’s `recordJobResult()` routine tracks a sliding window of job history so `getHealthStatus()` can report `successRate`, `consecutiveFailures`, and `errorPatterns`.
+- Cleanups (`cleanupJobs()`) call `jobStore.scheduledCleanupJobs(retentionDays)`, honoring `neo4jConfig.embedJobRetentionDays` (defaults to 14). There is also a `retryFailedJobs()` helper that reopens permanently failed jobs when operators want another pass.
+
+**Health & observability**:
+- `getHealthStatus()` returns `HEALTHY | DEGRADED | CRITICAL` plus nearest metrics; `startHealthServer()` (from `src/server/health.ts`) exposes these details at `/health` for external monitors.
+- Both the job processor and cleanup loop are wired into `runRecurringTask('embedding job processing', ...)` / `runRecurringTask('embedding job cleanup', ...)` with `JOB_RETRY_POLICY` derived from `EMBED_JOB_RETRY_*` env vars, so transient failures back off while critical errors halt the loop.
+- The health metrics are surfaced alongside the `ErrorCategory` metadata (stored in Neo4j via `failJob`) so the `/health` endpoint, logs, and diagnostics tools all see the same classification.
 
 ### Model Context Protocol Implementation
 
@@ -283,7 +336,7 @@ server.setRequestHandler(CallToolRequestSchema, handleCallToolRequest);
 - `get_decayed_graph`: Confidence-decayed graph view
 
 **Debug Tools (when DEBUG=true):**
-- `force_generate_embedding`: Manually trigger embedding generation
+- `force_generate_embedding`: Regenerate a single entity's embedding (`entity_name`) or omit it to run bounded batch repairs via `storageProvider.getEntitiesWithoutEmbeddings(limit)` (default `limit` 10).
 - `debug_embedding_config`: Diagnostic information
 - `diagnose_vector_search`: Vector index diagnostics
 
@@ -537,6 +590,11 @@ export default defineConfig({
 });
 ```
 
+#### Error-scenarios Script (`scripts/error-scenarios.ts`)
+
+- `npm run error-scenarios` drives the TypeScript script in `scripts/error-scenarios.ts`, which boots the built `KnowledgeGraphManager` and Neo4j storage provider from `dist` and runs three guardrails: (1) triggering a semantic query that falls back, (2) enforcing strict-mode to surface that fallback as an exception, and (3) measuring keyword-only latency as a baseline.
+- The script prints the returned `searchType`, `fallbackReason`, and `searchDiagnostics` objects so operators can validate routing logic, strict-mode enforcement, and keyword performance without exercising the MCP network endpoint.
+
 ### Build and Development Process
 
 #### Build Process (`package.json`):
@@ -620,7 +678,17 @@ export default defineConfig({
 #### Debug Tools:
 - `diagnose_vector_search`: Vector index health checking
 - `debug_embedding_config`: Configuration validation
-- `force_generate_embedding`: Manual embedding regeneration
+- `force_generate_embedding`: Manual embedding regeneration (specific entity or batch repair via the new `limit` parameter)
+
+##### Batch repair operational guide
+
+- **Entry conditions**: Invoke `force_generate_embedding` without `entity_name`. The new `limit` parameter (default 10) bounds how many entities without embeddings are returned from `storageProvider.getEntitiesWithoutEmbeddings(limit)`.
+- **Steady operations**: Start with `limit` between 5 and 15 depending on your graph size, queue the jobs, and wait for `Neo4jEmbeddingJobManager` to drain the batch before requesting the next one.
+- **Sizing guidance**:
+  - Small graphs (<1k current entities): `limit` 15–25 to recover quickly without touching all nodes.
+  - Medium graphs (1k–10k): `limit` 10–15 keeps memory and job throughput manageable.
+  - Large graphs (>10k): `limit` 5–10 per batch reduces pressure on the job queue and embedding store.
+- **Safety**: After every batch, confirm no entities remain with `getEntitiesWithoutEmbeddings(limit)` returning zero rows, then raise the limit slowly if the queue is healthy.
 
 #### Logging Levels:
 - **DEBUG**: Detailed operation tracing
@@ -704,12 +772,94 @@ case 'diagnose_vector_search':
 ```
 
 #### Manual Embedding Generation:
+
 ```typescript
 case 'force_generate_embedding':
-  // Multi-stage entity lookup (name, ID, direct database)
-  // Text preparation and embedding generation
-  // Dual storage (name and ID indexing)
+  const kgmAny = knowledgeGraphManager as any;
+  const jobManager = kgmAny.embeddingJobManager;
+
+  if (!jobManager) {
+    throw new Error('EmbeddingJobManager not initialized');
+  }
+
+  const entityNameArg =
+    args.entity_name !== undefined && args.entity_name !== null
+      ? String(args.entity_name).trim()
+      : '';
+  const hasEntityName = entityNameArg.length > 0;
+  const requestedLimitNumber = Number(args.limit);
+  const batchLimit =
+    Number.isFinite(requestedLimitNumber) && requestedLimitNumber > 0
+      ? Math.floor(requestedLimitNumber)
+      : 10;
+
+  if (hasEntityName) {
+    if (!kgmAny.storageProvider || typeof kgmAny.storageProvider.getEntity !== 'function') {
+      throw new Error('Storage provider must implement getEntity() for specific force mode');
+    }
+
+    const entity = await kgmAny.storageProvider.getEntity(entityNameArg);
+    if (!entity) {
+      throw new Error(`Entity not found: ${entityNameArg}`);
+    }
+
+    const jobId = await jobManager.scheduleEntityEmbedding(entity.name);
+    return { success: true, mode: 'specific', entity: entity.name, job_id: jobId ?? null };
+  }
+
+  if (
+    !kgmAny.storageProvider ||
+    typeof kgmAny.storageProvider.getEntitiesWithoutEmbeddings !== 'function'
+  ) {
+    throw new Error('Storage provider does not support discovering entities without embeddings');
+  }
+
+  const entities = await kgmAny.storageProvider.getEntitiesWithoutEmbeddings(batchLimit);
+  const jobResults = [];
+
+  for (const entity of entities) {
+    try {
+      const jobId = await jobManager.scheduleEntityEmbedding(entity.name);
+      jobResults.push({
+        entity: entity.name,
+        jobId: jobId ?? null,
+        status: jobId ? 'scheduled' : 'already queued',
+      });
+    } catch (error) {
+      jobResults.push({
+        entity: entity.name,
+        jobId: null,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const queuedCount = jobResults.filter((result) => result.status !== 'error').length;
+  const newlyScheduledCount = jobResults.filter((result) => result.status === 'scheduled').length;
+
+  return {
+    success: jobResults.every((result) => result.status !== 'error'),
+    mode: 'batch',
+    limit: batchLimit,
+    discovered: entities.length,
+    queued: queuedCount,
+    newly_scheduled: newlyScheduledCount,
+    failed: jobResults.filter((result) => result.status === 'error').length,
+    jobs: jobResults,
+  };
 ```
+
+The handler logs the chosen mode (`specific` vs. `batch`), the resolved `limit`, and the batch results so operators know whether the tool scheduled new work or skipped already queued jobs.
+
+##### Batch repair workflow
+
+1. Run `force_generate_embedding` without `entity_name`; the `limit` argument bounds how many entities lacking embeddings are retrieved via `storageProvider.getEntitiesWithoutEmbeddings(limit)` (default 10, minimum 1).
+2. Start with conservative limits (5–15 depending on graph size) and repeat the tool until it reports zero entities; only then increase `limit` if the job queue is healthy.
+3. After each invocation, watch the `Neo4jJobStore` queue status (`pending`, `processing`) and slow down/raise the limit if the workers lag or memory pressure spikes.
+4. Use lower limits (5–10) for very large graphs (>10k entities) and higher limits (10–15) for medium graphs (1k–10k) when embedding job throughput is stable.
+
+The updated `callToolHandler.diagnostic.test.ts` unit tests cover both modes, validating that the specific path uses `storageProvider.getEntity` and the batch path honors the sanitized `limit` when calling `getEntitiesWithoutEmbeddings`.
 
 ## CLI Tools Deep Analysis
 

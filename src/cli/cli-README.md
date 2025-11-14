@@ -232,7 +232,7 @@ When the `DEBUG` environment variable is set to `true`, additional diagnostic to
   # Returns count of entities with embeddings, sample entities, index status, and test query results
   ```
 
-- **force_generate_embedding**: Forces the generation and storage of an embedding for a specific entity
+- **force_generate_embedding**: Regenerates a named entity's embedding when `entity_name` is provided or, when omitted, discovers and queues a bounded batch of missing embeddings (`limit` controls the batch size, default 10)
 
   ```json
   {
@@ -240,7 +240,11 @@ When the `DEBUG` environment variable is set to `true`, additional diagnostic to
   }
   ```
 
-  _Note: This tool may be deprecated in future releases as embedding generation becomes more automated_
+  ```json
+  {
+    "limit": 20
+  }
+  ```
 
 - **debug_embedding_config**: Provides information about the current embedding service configuration
 

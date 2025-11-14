@@ -5,6 +5,15 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.16] - 2025-11-14
+
+### Added
+- Storage providers now expose `getEntitiesWithoutEmbeddings(limit)` so missing embeddings can be queried in bounded batches without loading the entire graph.
+
+### Changed
+- `force_generate_embedding` now exposes a dual-mode workflow that uses `storageProvider.getEntity()` for specific re-embedding, discovers and queues missing-embedding entities via `getEntitiesWithoutEmbeddings(limit)` in batch mode, and returns mode-aware JSON feedback instead of looping over `openNodes([])`.
+- Tool metadata, README guidance, and the detailed project analysis now document the new batch repair workflow, the optional `limit` parameter, and recommended batch sizes for different graph volumes, giving operators an operational guide for repairing missing embeddings safely.
+
 ## [0.3.9.15] - 2025-11-13
 
 ### Added
@@ -15,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration suites and `Neo4jIntegration.test.ts` read all Neo4j connection parameters (uri, bolt port, username, password, database name) from the environment, sanitize the database identifier to letters/numbers, and create/drop the dedicated integration database with scoped permissions.
 - Updated docs to describe the guarded integration workflow, health monitoring, and new script (README/docs/detailed-project-analysis.md).
 - The `Neo4jStorageProvider` now logs with `ErrorCategory` metadata everywhere, performs structured retries, and exposes the `runRecurringTask` helper for consistent backoff; job loops, semantic search diagnostics, and changelog entries reflect those observability improvements.
+- The scheduled job and cleanup loops use the shared retry policy and surface health transitions so degraded workers log warnings before human intervention.
+- Search results now include `searchType`, `fallbackReason`, and richer diagnostics (timings, embedding coverage, fallback chain) plus a strict mode that throws when semantic search is explicitly requested but unavailable.
 
 ## [0.3.9.14] - 2025-11-13
 

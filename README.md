@@ -112,7 +112,7 @@ Before running Memento MCP, initialize the Neo4j schema:
 npm install
 
 # Initialize Neo4j schema (includes constraints and indexes for embedding jobs)
-npx neo4j-cli init --uri bolt://localhost:7687 --username neo4j --password your_password
+npm run neo4j:init -- --uri bolt://localhost:7687 --username neo4j --password your_password
 ```
 
 This creates:
@@ -785,8 +785,15 @@ Memento MCP includes built-in diagnostic capabilities to help troubleshoot vecto
 Additional diagnostic tools become available when debug mode is enabled:
 
 - **diagnose_vector_search**: Information about the Neo4j vector index, embedding counts, and search functionality
-- **force_generate_embedding**: Forces the generation of an embedding for a specific entity
+- **force_generate_embedding**: Regenerates a single entity's embedding when `entity_name` is provided or discovers and queues up to `limit` entities missing embeddings when `entity_name` is omitted (default `limit` is 10)
 - **debug_embedding_config**: Information about the current embedding service configuration
+
+#### Batch repair workflow
+
+1. Omit `entity_name` to enter batch repair mode and use `limit` to control how many entities are retrieved from `getEntitiesWithoutEmbeddings(limit)` (default 10).  
+2. Run `force_generate_embedding` repeatedly with modest limits (5–20) until the batch returns zero entities, then raise the limit if the graph clearly needs more throughput.  
+3. After each batch, monitor the embedding job queue (`Neo4jJobStore`) to confirm jobs are being processed and adjust `limit` downwards if the workers lag or memory pressure increases.  
+4. For very large graphs (>10k entities) prefer `limit` values 5–10; medium graphs (1k–10k) can start at 10–15; small graphs (<1k) tolerate 20+ without significant strain.
 
 ### Developer Reset
 

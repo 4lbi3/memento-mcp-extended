@@ -1,6 +1,6 @@
 import type { StorageProvider, SearchOptions } from './StorageProvider.js';
 import * as fs from 'fs';
-import type { KnowledgeGraph, Relation } from '../KnowledgeGraphManager.js';
+import type { KnowledgeGraph, Relation, Entity } from '../KnowledgeGraphManager.js';
 import path from 'path';
 import type { VectorStoreFactoryOptions } from './VectorStoreFactory.js';
 
@@ -176,6 +176,26 @@ export class FileStorageProvider implements StorageProvider {
       entities: filteredEntities,
       relations: filteredRelations,
     };
+  }
+
+  /**
+   * Find entities that currently lack embeddings
+   * @param limit Optional maximum number of entities to return
+   * @returns Promise resolving to an array of entities missing embeddings
+   */
+  async getEntitiesWithoutEmbeddings(limit?: number): Promise<Entity[]> {
+    const graph = await this.loadGraph();
+    const normalizedLimit =
+      typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
+
+    const entitiesWithoutEmbeddings = graph.entities.filter((entity) => {
+      const hasEmbedding = Boolean(entity.embedding);
+      const validTo = (entity as unknown as Record<string, unknown>).validTo;
+      const isDeleted = validTo !== undefined && validTo !== null;
+      return !hasEmbedding && !isDeleted;
+    });
+
+    return entitiesWithoutEmbeddings.slice(0, normalizedLimit);
   }
 
   /**

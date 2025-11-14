@@ -159,170 +159,152 @@ export async function handleCallToolRequest(
           };
         }
 
-      case 'force_generate_embedding':
-        // Validate arguments
-        if (!args.entity_name) {
-          throw new Error('Missing required parameter: entity_name');
-        }
-
-        process.stderr.write(
-          `[DEBUG] Force generating embedding for entity: ${args.entity_name}\n`
-        );
-
+      case 'force_generate_embedding': {
         try {
-          // NOTE: This diagnostic tool accesses private KnowledgeGraphManager internals
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const kgmAny = knowledgeGraphManager as any;
+          const embeddingJobManager = kgmAny.embeddingJobManager;
 
-          // First determine if the input looks like a UUID
-          const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          const isUUID = uuidPattern.test(String(args.entity_name));
-
-          if (isUUID) {
-            process.stderr.write(`[DEBUG] Input appears to be a UUID: ${args.entity_name}\n`);
-          }
-
-          // Try to get all entities first to locate the correct one
-          process.stderr.write(`[DEBUG] Trying to find entity by opening all nodes...\n`);
-          const allEntities = await knowledgeGraphManager.openNodes([]);
-
-          let entity = null;
-
-          if (allEntities && allEntities.entities && allEntities.entities.length > 0) {
-            process.stderr.write(
-              `[DEBUG] Found ${allEntities.entities.length} entities in total\n`
-            );
-
-            // Try different methods to find the entity
-            // 1. Direct match by name
-            entity = allEntities.entities.find(
-              (e: { name: string }) => e.name === args.entity_name
-            );
-
-            // 2. If not found and input is UUID, try matching by ID
-            if (!entity && isUUID) {
-              entity = allEntities.entities.find((e) => {
-                const eAny = e as any;
-                // The id property might not be in the Entity interface, but could exist at runtime
-                return 'id' in eAny && eAny.id === args.entity_name;
-              });
-              process.stderr.write(`[DEBUG] Searching by ID match for UUID: ${args.entity_name}\n`);
-            }
-
-            // Log found entities to help debugging
-            if (!entity) {
-              process.stderr.write(
-                `[DEBUG] Entity not found in list. Available entities: ${JSON.stringify(
-                  allEntities.entities.map((e: { name: string; id?: string }) => ({
-                    name: e.name,
-                    id: e.id,
-                  }))
-                )}\n`
-              );
-            }
-          } else {
-            process.stderr.write(`[DEBUG] No entities found in graph\n`);
-          }
-
-          // If still not found, try explicit lookup by name
-          if (!entity) {
-            process.stderr.write(
-              `[DEBUG] Entity not found in list, trying explicit lookup by name...\n`
-            );
-            const openedEntities = await knowledgeGraphManager.openNodes([
-              String(args.entity_name),
-            ]);
-
-            if (openedEntities && openedEntities.entities && openedEntities.entities.length > 0) {
-              entity = openedEntities.entities[0];
-              process.stderr.write(
-                `[DEBUG] Found entity by name: ${entity.name} (ID: ${(entity as any).id || 'none'})\n`
-              );
-            }
-          }
-
-          // If still not found, check if we can query by ID through the storage provider
-          if (
-            !entity &&
-            isUUID &&
-            kgmAny.storageProvider &&
-            typeof kgmAny.storageProvider.getEntityById === 'function'
-          ) {
-            try {
-              process.stderr.write(
-                `[DEBUG] Trying direct database lookup by ID: ${args.entity_name}\n`
-              );
-              entity = await kgmAny.storageProvider.getEntityById(args.entity_name);
-              if (entity) {
-                process.stderr.write(
-                  `[DEBUG] Found entity by direct ID lookup: ${entity.name} (ID: ${(entity as Record<string, unknown>).id || 'none'})\n`
-                );
-              }
-            } catch (err) {
-              process.stderr.write(`[DEBUG] Direct ID lookup failed: ${err}\n`);
-            }
-          }
-
-          // Final check
-          if (!entity) {
-            process.stderr.write(
-              `[ERROR] Entity not found after all lookup attempts: ${args.entity_name}\n`
-            );
-            throw new Error(`Entity not found: ${args.entity_name}`);
-          }
-
-          process.stderr.write(
-            `[DEBUG] Successfully found entity: ${entity.name} (ID: ${(entity as Record<string, unknown>).id || 'none'})\n`
-          );
-
-          // Check if embedding service and job manager are available
-          if (!kgmAny.embeddingJobManager) {
+          if (!embeddingJobManager) {
             process.stderr.write(`[ERROR] EmbeddingJobManager not initialized\n`);
             throw new Error('EmbeddingJobManager not initialized');
           }
 
-          process.stderr.write(`[DEBUG] EmbeddingJobManager found, proceeding\n`);
+          const entityNameArg =
+            args.entity_name !== undefined && args.entity_name !== null
+              ? String(args.entity_name).trim()
+              : '';
+          const hasEntityName = entityNameArg.length > 0;
+          const requestedLimitNumber = Number(args.limit);
+          const batchLimit =
+            Number.isFinite(requestedLimitNumber) && requestedLimitNumber > 0
+              ? Math.floor(requestedLimitNumber)
+              : 10;
 
-          // Directly get the text for the entity
-          const embeddingText = kgmAny.embeddingJobManager._prepareEntityText(entity);
           process.stderr.write(
-            `[DEBUG] Prepared entity text for embedding, length: ${embeddingText.length}\n`
+            `[DEBUG] Force generating embedding tool invoked. mode=${
+              hasEntityName ? 'specific' : 'batch'
+            }, entityName=${entityNameArg || 'n/a'}, limit=${args.limit ?? 'default'}\n`
           );
 
-          // Generate embedding directly
-          const embeddingService = kgmAny.embeddingJobManager.embeddingService;
-          if (!embeddingService) {
-            process.stderr.write(`[ERROR] Embedding service not available\n`);
-            throw new Error('Embedding service not available');
+          if (hasEntityName) {
+            process.stderr.write(
+              `[DEBUG] Mode 1: forcing embedding for entity ${entityNameArg}\n`
+            );
+
+            if (
+              !kgmAny.storageProvider ||
+              typeof kgmAny.storageProvider.getEntity !== 'function'
+            ) {
+              throw new Error(
+                'Storage provider must implement getEntity() for specific force mode'
+              );
+            }
+
+            const entity = await kgmAny.storageProvider.getEntity(entityNameArg);
+            if (!entity) {
+              process.stderr.write(
+                `[ERROR] Entity not found: ${entityNameArg}\n`
+              );
+              throw new Error(`Entity not found: ${entityNameArg}`);
+            }
+
+            const jobId = await embeddingJobManager.scheduleEntityEmbedding(entity.name);
+            process.stderr.write(
+              `[DEBUG] Scheduled embedding job for ${entity.name} (jobId=${jobId ?? 'existing'})\n`
+            );
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      mode: 'specific',
+                      entity: entity.name,
+                      job_id: jobId,
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            };
           }
 
-          const vector = await embeddingService.generateEmbedding(embeddingText);
-          process.stderr.write(`[DEBUG] Generated embedding vector, length: ${vector.length}\n`);
+          process.stderr.write(
+            `[DEBUG] Mode 2: batch repair, discovering up to ${batchLimit} entities without embeddings\n`
+          );
 
-          // Store embedding directly
-          const embedding = {
-            vector,
-            model: embeddingService.getModelInfo().name,
-            lastUpdated: Date.now(),
-          };
+          if (
+            !kgmAny.storageProvider ||
+            typeof kgmAny.storageProvider.getEntitiesWithoutEmbeddings !== 'function'
+          ) {
+            throw new Error(
+              'Storage provider does not support discovering entities without embeddings'
+            );
+          }
 
-          // Store the embedding with both name and ID for redundancy
-          process.stderr.write(`[DEBUG] Storing embedding for entity: ${entity.name}\n`);
-          await kgmAny.storageProvider.storeEntityVector(entity.name, embedding);
+          const entitiesWithoutEmbeddings = await kgmAny.storageProvider.getEntitiesWithoutEmbeddings(
+            batchLimit
+          );
 
-          const entityId = (entity as Record<string, unknown>).id;
-          if (entityId && typeof entityId === 'string') {
-            process.stderr.write(`[DEBUG] Also storing embedding with entity ID: ${entityId}\n`);
+          if (!entitiesWithoutEmbeddings || entitiesWithoutEmbeddings.length === 0) {
+            process.stderr.write(`[DEBUG] No entities found without embeddings\n`);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      mode: 'batch',
+                      discovered: 0,
+                      limit: batchLimit,
+                      message: 'No entities without embeddings were found',
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            };
+          }
+
+          const jobResults: Array<{
+            entity: string;
+            jobId: string | null;
+            status: 'scheduled' | 'already queued' | 'error';
+            error?: string;
+          }> = [];
+
+          for (const entity of entitiesWithoutEmbeddings) {
             try {
-              await kgmAny.storageProvider.storeEntityVector(entityId, embedding);
-            } catch (idStoreError) {
+              const jobId = await embeddingJobManager.scheduleEntityEmbedding(entity.name);
+              jobResults.push({
+                entity: entity.name,
+                jobId: jobId ?? null,
+                status: jobId ? 'scheduled' : 'already queued',
+              });
+            } catch (jobError: unknown) {
+              const errorMessage =
+                jobError instanceof Error ? jobError.message : String(jobError ?? 'unknown error');
               process.stderr.write(
-                `[WARN] Failed to store embedding by ID, but name storage succeeded: ${idStoreError}\n`
+                `[ERROR] Failed to schedule embedding for ${entity.name}: ${errorMessage}\n`
               );
+              jobResults.push({
+                entity: entity.name,
+                jobId: null,
+                status: 'error',
+                error: errorMessage,
+              });
             }
           }
 
-          process.stderr.write(`[DEBUG] Successfully stored embedding for ${entity.name}\n`);
+          const queuedCount = jobResults.filter((result) => result.status !== 'error').length;
+          const failedCount = jobResults.filter((result) => result.status === 'error').length;
+          const newlyScheduledCount = jobResults.filter((result) => result.status === 'scheduled')
+            .length;
 
           return {
             content: [
@@ -330,11 +312,14 @@ export async function handleCallToolRequest(
                 type: 'text',
                 text: JSON.stringify(
                   {
-                    success: true,
-                    entity: entity.name,
-                    entity_id: (entity as Record<string, unknown>).id,
-                    vector_length: vector.length,
-                    model: embeddingService.getModelInfo().name,
+                    success: failedCount === 0,
+                    mode: 'batch',
+                    limit: batchLimit,
+                    discovered: entitiesWithoutEmbeddings.length,
+                    queued: queuedCount,
+                    newly_scheduled: newlyScheduledCount,
+                    failed: failedCount,
+                    jobs: jobResults,
                   },
                   null,
                   2
@@ -342,7 +327,6 @@ export async function handleCallToolRequest(
               },
             ],
           };
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
           process.stderr.write(`[ERROR] Failed to force generate embedding: ${error.message}\n`);
           if (error.stack) {
@@ -352,6 +336,7 @@ export async function handleCallToolRequest(
             content: [{ type: 'text', text: `Failed to generate embedding: ${error.message}` }],
           };
         }
+      }
 
       case 'semantic_search':
         try {

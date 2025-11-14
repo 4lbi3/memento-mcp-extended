@@ -1418,6 +1418,43 @@ export class Neo4jStorageProvider implements StorageProvider {
   }
 
   /**
+   * Get entities that currently lack embeddings
+   * @param limit Optional maximum number of results to return (defaults to 10)
+   */
+  async getEntitiesWithoutEmbeddings(limit?: number): Promise<Entity[]> {
+    const safeLimit =
+      typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
+    const boundedLimit = Math.max(1, safeLimit);
+
+    const session = await this.connectionManager.getSession();
+    try {
+      const query = `
+        MATCH (e:Entity)
+        WHERE e.embedding IS NULL
+          AND e.validTo IS NULL
+        RETURN e
+        LIMIT $limit
+      `;
+
+      const result = await session.run(query, {
+        limit: neo4j.int(boundedLimit),
+      });
+
+      return result.records.map((record) => {
+        const node = record.get('e').properties;
+        return this.nodeToEntity(node);
+      });
+    } catch (error) {
+      logNeo4jStorageProviderError('get entities without embeddings', error, {
+        limit: boundedLimit,
+      });
+      throw error;
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
    * Get a specific relation by its source, target, and type
    * @param from Source entity name
    * @param to Target entity name

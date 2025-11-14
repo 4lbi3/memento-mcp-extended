@@ -1,4 +1,4 @@
-import type { KnowledgeGraph } from '../KnowledgeGraphManager.js';
+import type { KnowledgeGraph, Entity } from '../KnowledgeGraphManager.js';
 import type { Relation } from '../types/relation.js';
 import type { EntityEmbedding, SemanticSearchOptions } from '../types/entity-embedding.js';
 
@@ -182,6 +182,13 @@ export interface StorageProvider {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getEntity(entityName: string): Promise<any | null>;
+
+  /**
+   * Find entities that currently lack embeddings
+   * @param limit Optional maximum number of entities to return
+   * @returns Promise resolving to an array of entities missing embeddings
+   */
+  getEntitiesWithoutEmbeddings(limit?: number): Promise<Entity[]>;
 }
 
 // Add static methods to the StorageProvider interface for JavaScript tests

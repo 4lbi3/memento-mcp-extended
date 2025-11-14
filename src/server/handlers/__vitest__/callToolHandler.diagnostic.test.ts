@@ -22,6 +22,11 @@ describe('Diagnostic Tool Handlers', () => {
         entities: [{ id: '123', name: 'TestEntity', observations: ['Test observation'] }],
         relations: [],
       }),
+      getEntity: vi.fn().mockResolvedValue({
+        name: 'TestEntity',
+        entityType: 'Person',
+        observations: ['Test observation'],
+      }),
       embeddingJobManager: {
         _prepareEntityText: vi.fn().mockReturnValue('Prepared text content'),
         embeddingService: {
@@ -32,6 +37,7 @@ describe('Diagnostic Tool Handlers', () => {
           }),
         },
         getPendingJobs: vi.fn().mockReturnValue([]),
+        scheduleEntityEmbedding: vi.fn().mockResolvedValue('test-embedding-job'),
       },
       storageProvider: {
         storeEntityVector: vi.fn().mockResolvedValue(undefined),
@@ -41,6 +47,12 @@ describe('Diagnostic Tool Handlers', () => {
           lastUpdated: Date.now(),
         }),
         countEntitiesWithEmbeddings: vi.fn().mockResolvedValue(0),
+        getEntity: vi.fn().mockResolvedValue({
+          name: 'TestEntity',
+          entityType: 'Person',
+          observations: ['Test observation'],
+        }),
+        getEntitiesWithoutEmbeddings: vi.fn().mockResolvedValue([]),
         vectorStore: {
           isInitialized: true,
         },
@@ -71,8 +83,7 @@ describe('Diagnostic Tool Handlers', () => {
   });
 
   describe('force_generate_embedding tool', () => {
-    it('should fetch the entity and generate an embedding', async () => {
-      // Create request for force_generate_embedding
+    it('should schedule an embedding job for the supplied entity', async () => {
       const request = {
         params: {
           name: 'force_generate_embedding',
@@ -82,44 +93,30 @@ describe('Diagnostic Tool Handlers', () => {
         },
       };
 
-      // Call the handler
       const result = await handleCallToolRequest(request, mockKnowledgeGraphManager);
 
-      // Check results
-      expect(mockKnowledgeGraphManager.openNodes).toHaveBeenCalledWith([]); // First call with empty array to get all entities
-      expect(mockKnowledgeGraphManager.embeddingJobManager._prepareEntityText).toHaveBeenCalled();
+      expect(mockKnowledgeGraphManager.storageProvider.getEntity).toHaveBeenCalledWith(
+        'TestEntity'
+      );
       expect(
-        mockKnowledgeGraphManager.embeddingJobManager.embeddingService.generateEmbedding
-      ).toHaveBeenCalledWith('Prepared text content');
-      expect(mockKnowledgeGraphManager.storageProvider.storeEntityVector).toHaveBeenCalled();
+        mockKnowledgeGraphManager.embeddingJobManager.scheduleEntityEmbedding
+      ).toHaveBeenCalledWith('TestEntity');
 
-      // Check response formatting
       expect(result).toHaveProperty('content');
       expect(result.content[0].type).toBe('text');
 
-      // Parse the response JSON to check content
       const responseData = JSON.parse(result.content[0].text);
       expect(responseData.success).toBe(true);
+      expect(responseData.mode).toBe('specific');
       expect(responseData.entity).toBe('TestEntity');
-      expect(responseData.vector_length).toBe(1536);
+      expect(responseData.job_id).toBe('test-embedding-job');
 
-      // Verify debug logs
-      expect(processWriteSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Force generating embedding for entity: TestEntity')
-      );
+      expect(processWriteSpy).toHaveBeenCalledWith(expect.stringContaining('mode=specific'));
     });
 
     it('should handle errors when entity is not found', async () => {
-      // Mock openNodes to return empty result for both the all entities call and specific entity call
-      mockKnowledgeGraphManager.openNodes = vi.fn().mockImplementation((names) => {
-        // Return empty array for any openNodes call
-        return Promise.resolve({
-          entities: [],
-          relations: [],
-        });
-      });
+      mockKnowledgeGraphManager.storageProvider.getEntity = vi.fn().mockResolvedValue(null);
 
-      // Create request
       const request = {
         params: {
           name: 'force_generate_embedding',
@@ -129,12 +126,67 @@ describe('Diagnostic Tool Handlers', () => {
         },
       };
 
-      // Call the handler
       const result = await handleCallToolRequest(request, mockKnowledgeGraphManager);
 
-      // Check error handling
-      expect(result.content[0].text).toContain('Failed to generate embedding');
+      expect(result.content[0].text).toContain(
+        'Failed to generate embedding: Entity not found: NonExistentEntity'
+      );
       expect(processWriteSpy).toHaveBeenCalledWith(expect.stringContaining('Entity not found'));
+    });
+
+    it('should discover entities without embeddings and queue jobs in batch mode', async () => {
+      const missingEntities = [
+        { name: 'MissingA', entityType: 'Person', observations: [] },
+        { name: 'MissingB', entityType: 'Person', observations: [] },
+      ];
+
+      mockKnowledgeGraphManager.storageProvider.getEntitiesWithoutEmbeddings = vi
+        .fn()
+        .mockResolvedValue(missingEntities);
+
+      const request = {
+        params: {
+          name: 'force_generate_embedding',
+          arguments: {},
+        },
+      };
+
+      const result = await handleCallToolRequest(request, mockKnowledgeGraphManager);
+
+      expect(
+        mockKnowledgeGraphManager.storageProvider.getEntitiesWithoutEmbeddings
+      ).toHaveBeenCalledWith(10);
+      expect(
+        mockKnowledgeGraphManager.embeddingJobManager.scheduleEntityEmbedding
+      ).toHaveBeenCalledTimes(missingEntities.length);
+
+      const responseData = JSON.parse(result.content[0].text);
+      expect(responseData.mode).toBe('batch');
+      expect(responseData.discovered).toBe(missingEntities.length);
+      expect(responseData.limit).toBe(10);
+      expect(responseData.queued).toBe(missingEntities.length);
+      expect(responseData.jobs).toHaveLength(missingEntities.length);
+    });
+
+    it('should honor the provided limit for batch repair mode', async () => {
+      mockKnowledgeGraphManager.storageProvider.getEntitiesWithoutEmbeddings = vi
+        .fn()
+        .mockResolvedValue([]);
+
+      const request = {
+        params: {
+          name: 'force_generate_embedding',
+          arguments: {
+            limit: '5',
+          },
+        },
+      };
+
+      await handleCallToolRequest(request, mockKnowledgeGraphManager);
+
+      expect(
+        mockKnowledgeGraphManager.storageProvider.getEntitiesWithoutEmbeddings
+      ).toHaveBeenCalledWith(5);
     });
   });
 
