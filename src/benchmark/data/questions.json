@@ -1,0 +1,72 @@
+[
+  {
+    "id": "q001",
+    "question": "Who is Alberto Rocco and what does he do?",
+    "goldAnswer": "Alberto Rocco is a software engineer who works at TechCorp in Milan, Italy. He specializes in artificial intelligence and machine learning, and leads a team of 5 engineers working on integrating AI capabilities into CloudFlow.",
+    "category": "person",
+    "relatedFactIds": ["fact_001", "fact_010"]
+  },
+  {
+    "id": "q002",
+    "question": "What is TechCorp and where is it located?",
+    "goldAnswer": "TechCorp is a technology company founded in 2015 that has offices in Milan, Rome, and Berlin. The company employs over 500 people and their main product is CloudFlow, a cloud-based workflow automation platform.",
+    "category": "organization",
+    "relatedFactIds": ["fact_002", "fact_008"]
+  },
+  {
+    "id": "q003",
+    "question": "What is the Memento MCP project?",
+    "goldAnswer": "Memento MCP is an open-source knowledge graph system designed for AI agents to provide persistent memory capabilities. It uses Neo4j graph database for storing entities and relationships with support for vector embeddings and semantic search.",
+    "category": "project",
+    "relatedFactIds": ["fact_003", "fact_004"]
+  },
+  {
+    "id": "q004",
+    "question": "What is Alberto Rocco's educational background?",
+    "goldAnswer": "Alberto Rocco graduated from Politecnico di Milano with a Master's degree in Computer Science in 2018. His thesis focused on neural networks.",
+    "category": "person",
+    "relatedFactIds": ["fact_006"]
+  },
+  {
+    "id": "q005",
+    "question": "What database does Memento MCP use and what are its capabilities?",
+    "goldAnswer": "Memento MCP uses Neo4j, a graph database that supports vector embeddings for semantic search. Neo4j is used for storing entities and relationships in the knowledge graph.",
+    "category": "technology",
+    "relatedFactIds": ["fact_004"]
+  },
+  {
+    "id": "q006",
+    "question": "What is Milan known for?",
+    "goldAnswer": "Milan is the second-largest city in Italy and a major financial center. It is known for fashion, design, and technology industries.",
+    "category": "location",
+    "relatedFactIds": ["fact_005"]
+  },
+  {
+    "id": "q007",
+    "question": "What is the Model Context Protocol (MCP)?",
+    "goldAnswer": "The Model Context Protocol (MCP) is a standard for connecting AI models with external tools and data sources, enabling seamless integration.",
+    "category": "technology",
+    "relatedFactIds": ["fact_007"]
+  },
+  {
+    "id": "q008",
+    "question": "What is CloudFlow?",
+    "goldAnswer": "CloudFlow is TechCorp's main product, a cloud-based workflow automation platform used by enterprise clients worldwide. Alberto Rocco's team is working on integrating AI capabilities into it.",
+    "category": "product",
+    "relatedFactIds": ["fact_008", "fact_010"]
+  },
+  {
+    "id": "q009",
+    "question": "What embedding models does OpenAI provide?",
+    "goldAnswer": "OpenAI provides embedding models like text-embedding-3-small that convert text into vector representations for semantic similarity.",
+    "category": "technology",
+    "relatedFactIds": ["fact_009"]
+  },
+  {
+    "id": "q010",
+    "question": "How many people work in Alberto Rocco's team and what are they working on?",
+    "goldAnswer": "Alberto Rocco leads a team of 5 engineers at TechCorp who are working on integrating AI capabilities into CloudFlow.",
+    "category": "person",
+    "relatedFactIds": ["fact_010"]
+  }
+]
