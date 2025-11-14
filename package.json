@@ -29,6 +29,7 @@
     "test:verbose": "clear && vitest run --reporter verbose",
     "test:integration": "TEST_INTEGRATION=true npm test",
     "error-scenarios": "tsx scripts/error-scenarios.ts",
+    "benchmark": "tsx src/benchmark/index.ts",
     "lint": "eslint 'src/**/*.ts'",
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "format": "prettier --write \"**/*.{ts,json,md}\"",
