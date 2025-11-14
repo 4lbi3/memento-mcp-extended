@@ -4,9 +4,10 @@
 import type { ModelConfig } from '../types.js';
 
 export const MODELS: Record<string, ModelConfig> = {
-  'gemini-1.5-flash': {
-    name: 'gemini-1.5-flash',
-    apiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+  'gemini-2.5-flash-lite': {
+    name: 'gemini-2.5-flash-lite',
+    apiEndpoint:
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
     rpm: 15, // Requests Per Minute
     tpm: 250000, // Tokens Per Minute
     rpd: 1000, // Requests Per Day

@@ -246,11 +246,25 @@ async function waitForEmbeddings(
   let totalProcessed = 0;
 
   while (Date.now() - startTime < maxWaitTime) {
+    const queueStatus = await embeddingJobManager.getQueueStatus();
+
+    if (queueStatus.pending === 0 && queueStatus.processing === 0) {
+      if (queueStatus.totalJobs === 0) {
+        console.log('  ✓ No embedding jobs were scheduled (queue empty)');
+      } else {
+        console.log('  ✓ Embedding queue drained');
+      }
+      return;
+    }
+
     // Process some jobs
     const result = await embeddingJobManager.processJobs(10);
     totalProcessed += result.processed || 0;
 
-    console.log(`  Embedding progress: ${totalProcessed} jobs processed (${result.successful} successful, ${result.failed} failed)`);
+    console.log(
+      `  Embedding progress: ${totalProcessed} jobs processed (${result.successful} successful, ${result.failed} failed) `
+        + `- pending ${queueStatus.pending}, processing ${queueStatus.processing}`
+    );
 
     // If we've processed at least as many jobs as entities, we're likely done
     if (totalProcessed >= expectedCount) {

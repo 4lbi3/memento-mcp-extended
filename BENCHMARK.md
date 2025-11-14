@@ -22,7 +22,7 @@ The benchmark script performs a complete evaluation cycle consisting of three ph
 
 The benchmark supports the following LLM models:
 
-### Gemini 1.5 Flash (Recommended)
+### Gemini 2.5 Flash Lite (Recommended)
 - **RPM**: 15 requests/minute
 - **TPM**: 250,000 tokens/minute
 - **RPD**: 1,000 requests/day
@@ -49,7 +49,7 @@ Edit `benchmark.config.json` and add your API keys:
 ```json
 {
   "llm": {
-    "model": "gemini-1.5-flash",
+    "model": "gemini-2.5-flash-lite",
     "apiKey": "YOUR_GEMINI_API_KEY_HERE"
   },
   "embedding": {

@@ -65,7 +65,7 @@ export interface Entity {
 
 // Re-export the Relation interface for backward compatibility
 export { Relation } from './types/relation.js';
-export { SemanticSearchOptions } from './types/entity-embedding.js';
+export type { SemanticSearchOptions } from './types/entity-embedding.js';
 
 // Export the KnowledgeGraph shape
 export interface KnowledgeGraph {

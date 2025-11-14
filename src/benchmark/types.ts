@@ -4,7 +4,7 @@
 
 export interface BenchmarkConfig {
   llm: {
-    model: 'gemini-1.5-flash' | 'gemma-3';
+    model: 'gemini-2.5-flash-lite' | 'gemma-3';
     apiKey: string;
   };
   embedding: {

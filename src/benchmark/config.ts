@@ -53,9 +53,9 @@ function validateConfig(config: BenchmarkConfig): void {
     if (config.llm.apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
       errors.push('Please set a valid API key in "llm.apiKey"');
     }
-    if (!['gemini-1.5-flash', 'gemma-3'].includes(config.llm.model)) {
+    if (!['gemini-2.5-flash-lite', 'gemma-3'].includes(config.llm.model)) {
       errors.push(
-        `Invalid model "${config.llm.model}". Must be "gemini-1.5-flash" or "gemma-3"`
+        `Invalid model "${config.llm.model}". Must be "gemini-2.5-flash-lite" or "gemma-3"`
       );
     }
   }
