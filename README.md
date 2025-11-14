@@ -706,7 +706,7 @@ Alternatively, for local development, you can use:
   "mcpServers": {
     "memento": {
       "command": "/path/to/node",
-      "args": ["/path/to/memento-mcp/dist/index.js"],
+      "args": ["/path/to/memento-mcp-extended/dist/index.js"],
       "env": {
         "MEMORY_STORAGE_TYPE": "neo4j",
         "NEO4J_URI": "bolt://127.0.0.1:7687",

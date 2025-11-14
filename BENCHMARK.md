@@ -119,7 +119,7 @@ You can create custom datasets by modifying:
 - `src/benchmark/data/facts.json` - Facts to ingest
 - `src/benchmark/data/questions.json` - Questions and gold answers
 
-**Important**: Keep the total number of facts + (questions × 3) under 250 to allow 4 cycles/day with Gemini 1.5 Flash.
+**Important**: Keep the total number of facts + (questions × 3) under 250 to allow 4 cycles/day with Gemini 2.5 Flash Lite.
 
 ### Dataset Format
 
@@ -177,7 +177,7 @@ The benchmark automatically validates that your chosen model can support the req
 - Facts: 10 → 10 LLM calls
 - Questions: 10 → 30 LLM calls (2 for retrieval + 1 for evaluation each)
 - Total per cycle: 40 LLM calls
-- Cycles per day: 1000 / 40 = 25 cycles (Gemini 1.5 Flash)
+- Cycles per day: 1000 / 40 = 25 cycles (Gemini 2.5 Flash Lite)
 
 ## Troubleshooting
 
