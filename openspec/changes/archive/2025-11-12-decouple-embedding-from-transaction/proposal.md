@@ -16,10 +16,11 @@ The embedding job infrastructure (`Neo4jEmbeddingJobManager`, `Neo4jJobStore`) a
 - **Remove synchronous embedding generation** from `Neo4jStorageProvider.createEntities` (lines 648-668)
 - **Entities are created without embeddings** in the initial transaction (fast, milliseconds)
 - **Rely exclusively on asynchronous job queue** for embedding generation
-- Transaction duration reduced from O(n * 2s) to O(n * 10ms) where n = number of entities
+- Transaction duration reduced from O(n _ 2s) to O(n _ 10ms) where n = number of entities
 - **No API changes**: The public interface remains identical
 
 **Performance Impact**:
+
 - Database transaction time: ~2000ms per entity → ~10ms per entity (200x improvement)
 - Lock hold time: Seconds → Milliseconds
 - Throughput: No longer limited by embedding API latency
@@ -28,20 +29,26 @@ The embedding job infrastructure (`Neo4jEmbeddingJobManager`, `Neo4jJobStore`) a
 ## Impact
 
 ### Affected Specs
+
 - `embedding-jobs`: Modified requirement for "Entity Creation Integration"
 
 ### Affected Code
+
 - `src/storage/neo4j/Neo4jStorageProvider.ts:619-732` - Remove synchronous embedding generation from `createEntities` method
 - `src/KnowledgeGraphManager.ts:467-470` - Already schedules jobs correctly, no changes needed
 
 ### Breaking Changes
+
 **None** - This is a transparent performance optimization. The public API contract remains unchanged:
+
 - Entities are still created successfully
 - Embeddings are still generated (asynchronously)
 - Semantic search still works (once jobs complete)
 
 ### Migration Path
+
 No migration needed. The change is backward compatible:
+
 1. Entities created before the change have embeddings
 2. Entities created after the change get embeddings via job queue
 3. Both work identically for semantic search

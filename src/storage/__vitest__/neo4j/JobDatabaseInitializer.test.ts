@@ -27,9 +27,7 @@ const {
     current: async () => ({ records: [] }),
   };
 
-  function setRunHandler(
-    fn: (args: RunHandlerArgs) => Promise<RunHandlerResult>
-  ) {
+  function setRunHandler(fn: (args: RunHandlerArgs) => Promise<RunHandlerResult>) {
     const spyFn = vi.fn(fn);
     neo4jRunHandler.current = spyFn;
     return spyFn;
@@ -138,7 +136,8 @@ describe('ensureJobDatabasePrepared', () => {
         return {
           records: [
             {
-              get: (key: string) => (key === 'currentStatus' ? (showStatusCalls > 1 ? 'ONLINE' : 'CREATING') : null),
+              get: (key: string) =>
+                key === 'currentStatus' ? (showStatusCalls > 1 ? 'ONLINE' : 'CREATING') : null,
             },
           ],
         };

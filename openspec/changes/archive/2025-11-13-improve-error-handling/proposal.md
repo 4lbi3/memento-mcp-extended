@@ -11,6 +11,7 @@ The embedding job processing system currently has inadequate error handling that
 3. **Generic Catch Blocks Without Type Discrimination** - Error handling throughout the codebase uses generic `catch (error)` blocks that don't distinguish between recoverable transient errors (network timeouts) and permanent failures (data corruption). This prevents appropriate recovery strategies.
 
 These issues cause:
+
 - Embedding jobs to hang forever after transient API failures
 - Degraded search quality without user awareness
 - Silent data quality issues that are difficult to diagnose
@@ -20,6 +21,7 @@ These issues cause:
 ### Priority 1: Critical Fixes
 
 1. **Job Processing Error Recovery** (src/index.ts:158-191)
+
    - Add error classification to distinguish transient vs permanent failures
    - Implement exponential backoff retry for transient errors
    - Add job timeout and automatic unlock mechanism
@@ -34,6 +36,7 @@ These issues cause:
 ### Priority 2: Systematic Improvements
 
 3. **Error Classification Utility**
+
    - Create `src/utils/errors.ts` with error type definitions
    - Implement `classifyError(error: unknown): ErrorCategory` function
    - Define retry policies per error category
@@ -53,10 +56,12 @@ These issues cause:
 ## Impact
 
 ### Affected Specs
+
 - **embedding-jobs** - Job processing error recovery and health monitoring
 - **entity-management** (potential) - Search result format changes
 
 ### Affected Code
+
 - `src/index.ts` - Job processing and cleanup loops (lines 158-191)
 - `src/KnowledgeGraphManager.ts` - Search methods and fallback logic (lines 796-903)
 - `src/embeddings/Neo4jEmbeddingJobManager.ts` - Job processing error handling
@@ -64,7 +69,9 @@ These issues cause:
 - `src/utils/errors.ts` - NEW file for error classification utilities
 
 ### Migration Path
+
 For clients consuming search results:
+
 ```typescript
 // Before
 const results = await manager.search('query', { semanticSearch: true });
@@ -77,6 +84,7 @@ if (results.searchType === 'keyword' && results.fallbackReason) {
 ```
 
 ### Testing Requirements
+
 - Unit tests for error classification utility
 - Integration tests for job processing retry logic
 - Tests for search fallback behavior and transparency

@@ -46,6 +46,8 @@ describe('Neo4jEmbeddingJobManager', () => {
       cleanupJobs: vi.fn(),
       scheduledCleanupJobs: vi.fn(),
       heartbeatJobs: vi.fn(),
+      releaseJobs: vi.fn().mockResolvedValue(0),
+      recoverStaleJobs: vi.fn().mockResolvedValue(0),
       close: vi.fn(),
     } as any;
 
@@ -68,7 +70,8 @@ describe('Neo4jEmbeddingJobManager', () => {
       undefined, // rate limiter options
       undefined, // cache options
       undefined, // logger
-      'test-worker'
+      'test-worker',
+      { staleJobRecoveryIntervalMs: 0 }
     );
   });
 
@@ -99,8 +102,9 @@ describe('Neo4jEmbeddingJobManager', () => {
     it('should throw error for non-existent entity', async () => {
       mockStorageProvider.getEntity.mockResolvedValue(null);
 
-      await expect(jobManager.scheduleEntityEmbedding('NonExistentEntity'))
-        .rejects.toThrow('Entity NonExistentEntity not found');
+      await expect(jobManager.scheduleEntityEmbedding('NonExistentEntity')).rejects.toThrow(
+        'Entity NonExistentEntity not found'
+      );
     });
 
     it('should handle job already existing', async () => {
@@ -171,11 +175,16 @@ describe('Neo4jEmbeddingJobManager', () => {
 
       const result = await jobManager.processJobs(10);
 
-      expect(mockJobStore.failJob).toHaveBeenCalledWith('job-1', 'test-worker', 'Entity not found', {
-        category: 'permanent',
-        stack: expect.stringContaining('Entity not found'),
-        permanent: true,
-      });
+      expect(mockJobStore.failJob).toHaveBeenCalledWith(
+        'job-1',
+        'test-worker',
+        'Entity not found',
+        {
+          category: 'permanent',
+          stack: expect.stringContaining('Entity not found'),
+          permanent: true,
+        }
+      );
       expect(result.processed).toBe(1);
       expect(result.successful).toBe(0);
       expect(result.failed).toBe(1);
@@ -204,6 +213,113 @@ describe('Neo4jEmbeddingJobManager', () => {
       const result = await jobManager.processJobs(10);
 
       expect(result.processed).toBe(0); // No jobs processed due to rate limit
+    });
+
+    it('releases unprocessed leases when rate limit stops mid-batch', async () => {
+      const leasedJobs = [
+        {
+          id: 'job-1',
+          entity_uid: 'TestEntity',
+          model: 'test-model',
+          version: '1',
+          status: 'processing',
+          priority: 1,
+          created_at: Date.now(),
+          attempts: 1,
+          max_attempts: 3,
+          lock_owner: 'test-worker',
+          lock_until: Date.now() + 300000,
+        },
+        {
+          id: 'job-2',
+          entity_uid: 'TestEntity',
+          model: 'test-model',
+          version: '1',
+          status: 'processing',
+          priority: 1,
+          created_at: Date.now(),
+          attempts: 1,
+          max_attempts: 3,
+          lock_owner: 'test-worker',
+          lock_until: Date.now() + 300000,
+        },
+      ];
+
+      mockJobStore.leaseJobs.mockResolvedValue(leasedJobs);
+      mockStorageProvider.getEntity.mockResolvedValue(mockEntity);
+      mockEmbeddingService.generateEmbedding.mockResolvedValue(mockEmbedding);
+      mockJobStore.completeJob.mockResolvedValue(true);
+      mockJobStore.releaseJobs.mockResolvedValue(1);
+
+      (jobManager as any).rateLimiter.tokens = 1;
+      (jobManager as any).rateLimiter.interval = 60000;
+      (jobManager as any).rateLimiter.lastRefill = Date.now();
+
+      await jobManager.processJobs(10);
+
+      expect(mockJobStore.releaseJobs).toHaveBeenCalledTimes(1);
+      expect(mockJobStore.releaseJobs).toHaveBeenCalledWith([leasedJobs[1].id], 'test-worker');
+    });
+  });
+
+  describe('stale job recovery', () => {
+    it('runs recovery on startup and via the configured interval', async () => {
+      const recoveryInterval = 1000;
+      vi.useFakeTimers();
+
+      const recoveryManager = new Neo4jEmbeddingJobManager(
+        mockStorageProvider,
+        mockEmbeddingService,
+        mockJobStore,
+        undefined,
+        undefined,
+        undefined,
+        'recovery-worker',
+        { staleJobRecoveryIntervalMs: recoveryInterval }
+      );
+
+      try {
+        expect(mockJobStore.recoverStaleJobs).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(recoveryInterval);
+        await Promise.resolve();
+
+        expect(mockJobStore.recoverStaleJobs).toHaveBeenCalledTimes(2);
+      } finally {
+        recoveryManager.stopStaleJobRecovery();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    });
+
+    it('disables recovery when EMBED_JOB_RECOVERY_INTERVAL is zero', async () => {
+      const original = process.env.EMBED_JOB_RECOVERY_INTERVAL;
+      process.env.EMBED_JOB_RECOVERY_INTERVAL = '0';
+      let envManager: Neo4jEmbeddingJobManager | null = null;
+
+      try {
+        envManager = new Neo4jEmbeddingJobManager(
+          mockStorageProvider,
+          mockEmbeddingService,
+          mockJobStore,
+          undefined,
+          undefined,
+          undefined,
+          'env-worker'
+        );
+
+        expect(mockJobStore.recoverStaleJobs).not.toHaveBeenCalled();
+      } finally {
+        if (envManager) {
+          envManager.stopStaleJobRecovery();
+        }
+
+        if (original === undefined) {
+          delete process.env.EMBED_JOB_RECOVERY_INTERVAL;
+        } else {
+          process.env.EMBED_JOB_RECOVERY_INTERVAL = original;
+        }
+      }
     });
   });
 

@@ -40,7 +40,10 @@ function resolveJobDatabaseCredentials(config: Neo4jConfig): JobDatabaseCredenti
 }
 
 async function ensureDatabaseExists(credentials: JobDatabaseCredentials): Promise<void> {
-  const driver = neo4j.driver(credentials.uri, neo4j.auth.basic(credentials.username, credentials.password));
+  const driver = neo4j.driver(
+    credentials.uri,
+    neo4j.auth.basic(credentials.username, credentials.password)
+  );
   let session = driver.session({ database: credentials.database });
 
   try {
@@ -79,7 +82,7 @@ async function ensureDatabaseExists(credentials: JobDatabaseCredentials): Promis
 
 async function waitForDatabaseOnline(driver: neo4j.Driver, dbName: string): Promise<void> {
   const maxAttempts = 10;
-  const systemSessionFactory = () => driver.session({ database: SYSTEM_DATABASE });
+  const systemSessionFactory = (): neo4j.Session => driver.session({ database: SYSTEM_DATABASE });
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const session = systemSessionFactory();

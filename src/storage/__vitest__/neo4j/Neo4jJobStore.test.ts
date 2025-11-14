@@ -32,13 +32,15 @@ describe('Neo4jJobStore', () => {
   describe('enqueueJob', () => {
     it('should enqueue a new job successfully', async () => {
       const mockResult = {
-        records: [{
-          get: (key: string) => {
-            if (key === 'job.id') return 'test-job-id';
-            if (key === 'job.status') return 'created';
-            return null;
-          }
-        }]
+        records: [
+          {
+            get: (key: string) => {
+              if (key === 'job.id') return 'test-job-id';
+              if (key === 'job.status') return 'created';
+              return null;
+            },
+          },
+        ],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -66,13 +68,15 @@ describe('Neo4jJobStore', () => {
 
     it('should return null when job already exists', async () => {
       const mockResult = {
-        records: [{
-          get: (key: string) => {
-            if (key === 'job.id') return 'existing-job-id';
-            if (key === 'job.status') return 'pending';
-            return null;
-          }
-        }]
+        records: [
+          {
+            get: (key: string) => {
+              if (key === 'job.id') return 'existing-job-id';
+              if (key === 'job.status') return 'pending';
+              return null;
+            },
+          },
+        ],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -91,21 +95,23 @@ describe('Neo4jJobStore', () => {
   describe('leaseJobs', () => {
     it('should lease available jobs', async () => {
       const mockResult = {
-        records: [{
-          get: vi.fn().mockReturnValue({
-            id: 'job-1',
-            entity_uid: 'entity-1',
-            model: 'model-1',
-            version: '1',
-            status: 'processing',
-            priority: 1,
-            created_at: Date.now(),
-            lock_owner: 'worker-1',
-            lock_until: Date.now() + 300000,
-            attempts: 1,
-            max_attempts: 3,
-          })
-        }]
+        records: [
+          {
+            get: vi.fn().mockReturnValue({
+              id: 'job-1',
+              entity_uid: 'entity-1',
+              model: 'model-1',
+              version: '1',
+              status: 'processing',
+              priority: 1,
+              created_at: Date.now(),
+              lock_owner: 'worker-1',
+              lock_until: Date.now() + 300000,
+              attempts: 1,
+              max_attempts: 3,
+            }),
+          },
+        ],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -128,7 +134,7 @@ describe('Neo4jJobStore', () => {
   describe('completeJob', () => {
     it('should complete a job successfully', async () => {
       const mockResult = {
-        records: [{ get: () => 1 }]
+        records: [{ get: () => 1 }],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -136,7 +142,7 @@ describe('Neo4jJobStore', () => {
 
       expect(result).toBe(true);
       expect(connectionManager.executeQuery).toHaveBeenCalledWith(
-        expect.stringContaining('SET job.status = \'completed\''),
+        expect.stringContaining("SET job.status = 'completed'"),
         expect.objectContaining({
           jobId: 'job-1',
           lockOwner: 'worker-1',
@@ -148,7 +154,7 @@ describe('Neo4jJobStore', () => {
   describe('failJob', () => {
     it('should fail a job and mark for retry', async () => {
       const mockResult = {
-        records: [{ get: () => 1 }]
+        records: [{ get: () => 1 }],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -175,18 +181,20 @@ describe('Neo4jJobStore', () => {
   describe('getQueueStatus', () => {
     it('should return queue statistics', async () => {
       const mockResult = {
-        records: [{
-          get: (key: string) => {
-            const stats: Record<string, number> = {
-              total: 10,
-              pending: 5,
-              processing: 3,
-              completed: 1,
-              failed: 1,
-            };
-            return stats[key] || 0;
-          }
-        }]
+        records: [
+          {
+            get: (key: string) => {
+              const stats: Record<string, number> = {
+                total: 10,
+                pending: 5,
+                processing: 3,
+                completed: 1,
+                failed: 1,
+              };
+              return stats[key] || 0;
+            },
+          },
+        ],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -203,7 +211,7 @@ describe('Neo4jJobStore', () => {
   describe('retryFailedJobs', () => {
     it('should retry failed jobs', async () => {
       const mockResult = {
-        records: [{ get: () => 3 }]
+        records: [{ get: () => 3 }],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -211,7 +219,7 @@ describe('Neo4jJobStore', () => {
 
       expect(result).toBe(3);
       expect(connectionManager.executeQuery).toHaveBeenCalledWith(
-        expect.stringContaining('WHERE job.status = \'failed\''),
+        expect.stringContaining("WHERE job.status = 'failed'"),
         {}
       );
     });
@@ -220,7 +228,7 @@ describe('Neo4jJobStore', () => {
   describe('cleanupJobs', () => {
     it('should clean up old completed jobs', async () => {
       const mockResult = {
-        records: [{ get: () => 5 }]
+        records: [{ get: () => 5 }],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -239,7 +247,7 @@ describe('Neo4jJobStore', () => {
   describe('heartbeatJobs', () => {
     it('should send heartbeat for jobs', async () => {
       const mockResult = {
-        records: [{ get: () => 2 }]
+        records: [{ get: () => 2 }],
       };
       connectionManager.executeQuery.mockResolvedValue(mockResult);
 
@@ -261,6 +269,62 @@ describe('Neo4jJobStore', () => {
 
       expect(result).toBe(0);
       expect(connectionManager.executeQuery).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('releaseJobs', () => {
+    it('should release jobs owned by the caller', async () => {
+      const mockResult = {
+        records: [{ get: () => 2 }],
+      };
+      connectionManager.executeQuery.mockResolvedValue(mockResult);
+
+      const jobIds = ['job-1', 'job-2'];
+      const result = await jobStore.releaseJobs(jobIds, 'worker-1');
+
+      expect(result).toBe(2);
+      expect(connectionManager.executeQuery).toHaveBeenCalledWith(
+        expect.stringContaining("SET job.status = 'pending'"),
+        expect.objectContaining({
+          jobIds,
+          lockOwner: 'worker-1',
+        })
+      );
+    });
+
+    it('should no-op when called with an empty array', async () => {
+      const result = await jobStore.releaseJobs([], 'worker-1');
+
+      expect(result).toBe(0);
+      expect(connectionManager.executeQuery).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('recoverStaleJobs', () => {
+    it('should recover jobs with expired locks', async () => {
+      const mockResult = {
+        records: [{ get: () => 3 }],
+      };
+      connectionManager.executeQuery.mockResolvedValue(mockResult);
+
+      const result = await jobStore.recoverStaleJobs();
+
+      expect(result).toBe(3);
+      expect(connectionManager.executeQuery).toHaveBeenCalledWith(
+        expect.stringContaining('lock_until < timestamp()'),
+        {}
+      );
+    });
+
+    it('should handle zero recovered jobs gracefully', async () => {
+      const mockResult = {
+        records: [{ get: () => 0 }],
+      };
+      connectionManager.executeQuery.mockResolvedValue(mockResult);
+
+      const result = await jobStore.recoverStaleJobs();
+
+      expect(result).toBe(0);
     });
   });
 });

@@ -1,7 +1,24 @@
 import * as toolHandlers from './toolHandlers/index.js';
-import type { KnowledgeGraphManager, Relation } from '../../KnowledgeGraphManager.js';
+import type { KnowledgeGraphManager, Relation, Entity } from '../../KnowledgeGraphManager.js';
+import type { Neo4jEmbeddingJobManager } from '../../embeddings/Neo4jEmbeddingJobManager.js';
+import type { StorageProvider } from '../../storage/StorageProvider.js';
 import { gatherDebugEmbeddingConfig } from '../../diagnostics/debugEmbeddingConfig.js';
 import { formatKnowledgeGraphForDisplay } from './utils/graphFormatter.js';
+
+type KnowledgeGraphManagerInternals = {
+  embeddingJobManager?: Neo4jEmbeddingJobManager;
+  storageProvider?: StorageProvider;
+};
+
+function getEmbeddingJobManager(
+  manager: KnowledgeGraphManager
+): Neo4jEmbeddingJobManager | undefined {
+  return (manager as unknown as KnowledgeGraphManagerInternals).embeddingJobManager;
+}
+
+function getStorageProvider(manager: KnowledgeGraphManager): StorageProvider | undefined {
+  return (manager as unknown as KnowledgeGraphManagerInternals).storageProvider;
+}
 
 /**
  * Handles the CallTool request.
@@ -161,8 +178,7 @@ export async function handleCallToolRequest(
 
       case 'force_generate_embedding': {
         try {
-          const kgmAny = knowledgeGraphManager as any;
-          const embeddingJobManager = kgmAny.embeddingJobManager;
+          const embeddingJobManager = getEmbeddingJobManager(knowledgeGraphManager);
 
           if (!embeddingJobManager) {
             process.stderr.write(`[ERROR] EmbeddingJobManager not initialized\n`);
@@ -187,24 +203,18 @@ export async function handleCallToolRequest(
           );
 
           if (hasEntityName) {
-            process.stderr.write(
-              `[DEBUG] Mode 1: forcing embedding for entity ${entityNameArg}\n`
-            );
+            process.stderr.write(`[DEBUG] Mode 1: forcing embedding for entity ${entityNameArg}\n`);
 
-            if (
-              !kgmAny.storageProvider ||
-              typeof kgmAny.storageProvider.getEntity !== 'function'
-            ) {
+            const storageProvider = getStorageProvider(knowledgeGraphManager);
+            if (!storageProvider || typeof storageProvider.getEntity !== 'function') {
               throw new Error(
                 'Storage provider must implement getEntity() for specific force mode'
               );
             }
 
-            const entity = await kgmAny.storageProvider.getEntity(entityNameArg);
+            const entity = await storageProvider.getEntity(entityNameArg);
             if (!entity) {
-              process.stderr.write(
-                `[ERROR] Entity not found: ${entityNameArg}\n`
-              );
+              process.stderr.write(`[ERROR] Entity not found: ${entityNameArg}\n`);
               throw new Error(`Entity not found: ${entityNameArg}`);
             }
 
@@ -236,18 +246,25 @@ export async function handleCallToolRequest(
             `[DEBUG] Mode 2: batch repair, discovering up to ${batchLimit} entities without embeddings\n`
           );
 
+          const storageProvider = getStorageProvider(knowledgeGraphManager);
           if (
-            !kgmAny.storageProvider ||
-            typeof kgmAny.storageProvider.getEntitiesWithoutEmbeddings !== 'function'
+            !storageProvider ||
+            typeof (
+              storageProvider as {
+                getEntitiesWithoutEmbeddings?: (limit: number) => Promise<Entity[]>;
+              }
+            ).getEntitiesWithoutEmbeddings !== 'function'
           ) {
             throw new Error(
               'Storage provider does not support discovering entities without embeddings'
             );
           }
 
-          const entitiesWithoutEmbeddings = await kgmAny.storageProvider.getEntitiesWithoutEmbeddings(
-            batchLimit
-          );
+          const entitiesWithoutEmbeddings = await (
+            storageProvider as {
+              getEntitiesWithoutEmbeddings: (limit: number) => Promise<Entity[]>;
+            }
+          ).getEntitiesWithoutEmbeddings(batchLimit);
 
           if (!entitiesWithoutEmbeddings || entitiesWithoutEmbeddings.length === 0) {
             process.stderr.write(`[DEBUG] No entities found without embeddings\n`);
@@ -303,8 +320,9 @@ export async function handleCallToolRequest(
 
           const queuedCount = jobResults.filter((result) => result.status !== 'error').length;
           const failedCount = jobResults.filter((result) => result.status === 'error').length;
-          const newlyScheduledCount = jobResults.filter((result) => result.status === 'scheduled')
-            .length;
+          const newlyScheduledCount = jobResults.filter(
+            (result) => result.status === 'scheduled'
+          ).length;
 
           return {
             content: [
@@ -327,13 +345,15 @@ export async function handleCallToolRequest(
               },
             ],
           };
-        } catch (error: any) {
-          process.stderr.write(`[ERROR] Failed to force generate embedding: ${error.message}\n`);
-          if (error.stack) {
-            process.stderr.write(`[ERROR] Stack trace: ${error.stack}\n`);
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorStack = error instanceof Error ? error.stack : undefined;
+          process.stderr.write(`[ERROR] Failed to force generate embedding: ${errorMessage}\n`);
+          if (errorStack) {
+            process.stderr.write(`[ERROR] Stack trace: ${errorStack}\n`);
           }
           return {
-            content: [{ type: 'text', text: `Failed to generate embedding: ${error.message}` }],
+            content: [{ type: 'text', text: `Failed to generate embedding: ${errorMessage}` }],
           };
         }
       }
@@ -386,9 +406,8 @@ export async function handleCallToolRequest(
               lastUpdated?: number;
             };
 
-            const embedding: EntityEmbedding | null = await kgmAny.storageProvider.getEntityEmbedding(
-              String(args.entity_name)
-            );
+            const embedding: EntityEmbedding | null =
+              await kgmAny.storageProvider.getEntityEmbedding(String(args.entity_name));
 
             if (!embedding) {
               return {

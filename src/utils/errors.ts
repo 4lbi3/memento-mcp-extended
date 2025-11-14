@@ -1,12 +1,20 @@
 import type { AxiosError } from 'axios';
 import type { Neo4jError } from 'neo4j-driver';
 
-const TRANSIENT_NETWORK_CODES = new Set(["ECONNRESET", "ECONNABORTED", "ECONNREFUSED", "EPIPE", "ENETUNREACH", "EHOSTUNREACH", "ENOTFOUND"]);
-const TIMEOUT_CODES = new Set(["ETIMEDOUT", "ESOCKETTIMEDOUT", "ECONNABORTED"]);
-const VALIDATION_ERROR_NAMES = new Set(["ValidationError", "ZodError"]);
-const NEO4J_TRANSIENT_PREFIX = "Neo.TransientError";
-const NEO4J_CLIENT_PREFIX = "Neo.ClientError";
-const NEO4J_DATABASE_PREFIX = "Neo.DatabaseError";
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENOTFOUND',
+]);
+const TIMEOUT_CODES = new Set(['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'ECONNABORTED']);
+const VALIDATION_ERROR_NAMES = new Set(['ValidationError', 'ZodError']);
+const NEO4J_TRANSIENT_PREFIX = 'Neo.TransientError';
+const NEO4J_CLIENT_PREFIX = 'Neo.ClientError';
+const NEO4J_DATABASE_PREFIX = 'Neo.DatabaseError';
 
 export enum ErrorCategory {
   TRANSIENT = 'transient',
@@ -38,8 +46,9 @@ export function isTimeoutError(error: unknown): boolean {
     return true;
   }
 
-  return hasErrorName(error, 'AbortError') ||
-    (error instanceof Error && /timeout/i.test(error.message));
+  return (
+    hasErrorName(error, 'AbortError') || (error instanceof Error && /timeout/i.test(error.message))
+  );
 }
 
 export function isValidationError(error: unknown): error is Error {

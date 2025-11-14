@@ -105,9 +105,14 @@ export const DEFAULT_NEO4J_CONFIG: Neo4jConfig = {
   vectorIndexName: 'entity_embeddings',
   vectorDimensions: 1536,
   similarityFunction: 'cosine',
-  jobDatabaseUri: process.env.EMBED_JOB_DATABASE_URI || process.env.NEO4J_URI || `bolt://localhost:${process.env.NEO4J_BOLT_HOST_PORT || '7687'}`,
-  jobDatabaseUsername: process.env.EMBED_JOB_DATABASE_USERNAME || process.env.NEO4J_USERNAME || 'neo4j',
-  jobDatabasePassword: process.env.EMBED_JOB_DATABASE_PASSWORD || process.env.NEO4J_PASSWORD || 'memento_password',
+  jobDatabaseUri:
+    process.env.EMBED_JOB_DATABASE_URI ||
+    process.env.NEO4J_URI ||
+    `bolt://localhost:${process.env.NEO4J_BOLT_HOST_PORT || '7687'}`,
+  jobDatabaseUsername:
+    process.env.EMBED_JOB_DATABASE_USERNAME || process.env.NEO4J_USERNAME || 'neo4j',
+  jobDatabasePassword:
+    process.env.EMBED_JOB_DATABASE_PASSWORD || process.env.NEO4J_PASSWORD || 'memento_password',
   jobDatabaseName: process.env.EMBED_JOB_DATABASE_NAME || 'embedding-jobs',
   embedJobRetentionDays: parseEmbedJobRetentionDays(),
 };
@@ -121,10 +126,14 @@ export function validateNeo4jConfig(config: Neo4jConfig): void {
   // Validate retention days - must be explicitly set and valid
   const retentionDays = config.embedJobRetentionDays;
   if (retentionDays === undefined) {
-    throw new Error('EMBED_JOB_RETENTION_DAYS must be explicitly set to a value between 7 and 30 days');
+    throw new Error(
+      'EMBED_JOB_RETENTION_DAYS must be explicitly set to a value between 7 and 30 days'
+    );
   }
   if (!Number.isInteger(retentionDays) || retentionDays < 7 || retentionDays > 30) {
-    throw new Error(`EMBED_JOB_RETENTION_DAYS must be an integer between 7 and 30 days, got ${retentionDays}`);
+    throw new Error(
+      `EMBED_JOB_RETENTION_DAYS must be an integer between 7 and 30 days, got ${retentionDays}`
+    );
   }
 
   // Validate required fields

@@ -69,7 +69,6 @@ The Neo4j provider now enforces strict temporal validation across all relationsh
 - Every relationship creation/update query filters for `validTo IS NULL` endpoints so archived nodes can no longer receive new edges.
 - Dedicated Vitest coverage (`Neo4jTemporalIntegrity.test.ts`, augmented provider tests) guards against phantom relationships and verifies logging, version increments, and spec compliance.
 
-
 Together, these safeguards eliminate temporal corruption and keep the graph consistent under heavy versioning workloads.
 
 ### Database-Level Deduplication
@@ -116,6 +115,7 @@ npm run neo4j:init -- --uri bolt://localhost:7687 --username neo4j --password yo
 ```
 
 This creates:
+
 - Entity constraints and vector indexes
 - Embedding job queue schema with lease-based locking
 - Required indexes for efficient job processing
@@ -161,6 +161,10 @@ DETACH DELETE job;
 ```
 
 These same cleanup routines are also exposed programmatically via `Neo4jJobStore.cleanupJobs()`.
+
+### Stale Job Recovery
+
+Jobs that remain in `processing` because a worker crashed or stopped heartbeating are automatically reset by background recovery loops. The worker periodically searches for `:EmbedJob` nodes with `status: 'processing'` and `lock_until` in the past, clears the lock metadata, and returns the job to `pending` so another worker can pick it up. By default recovery runs every 60 seconds, but you can tune or disable it via `EMBED_JOB_RECOVERY_INTERVAL` (milliseconds); setting the value to `0` turns the periodic sweep off.
 
 ## Error Handling and Monitoring
 
@@ -510,6 +514,7 @@ The following tools are available to LLM client hosts through the Model Context 
    ```
 
 2. Edit `.env` and customize it before starting Neo4j for the first time:
+
    - Set `OPENAI_API_KEY` so embeddings can be generated.
    - Adjust `NEO4J_HTTP_HOST_PORT` and `NEO4J_BOLT_HOST_PORT` if the defaults collide with other services on your machine.
    - Change `NEO4J_USERNAME` and `NEO4J_PASSWORD` if you do not want to use the defaults. **Make these changes before the first `docker compose up`, otherwise you'll need to log into Neo4j (e.g., via `cypher-shell` or `neo4j-admin`) to rotate the credentials manually.**
@@ -551,6 +556,9 @@ EMBED_JOB_DATABASE_NAME=embedding-jobs
 # Controls how long completed/failed embedding jobs are retained (7-30 days)
 EMBED_JOB_RETENTION_DAYS=14
 
+# Stale job recovery interval (milliseconds, default 60000, set to 0 to disable)
+EMBED_JOB_RECOVERY_INTERVAL=60000
+
 # Embedding Service Configuration
 MEMORY_STORAGE_TYPE=neo4j
 OPENAI_API_KEY=your-openai-api-key
@@ -572,11 +580,13 @@ For production deployments, Memento MCP supports isolating embedding job queue d
 > **Good to know:** On startup the MCP server attempts to create the `embedding-jobs` database (and its constraints/indexes) automatically if the configured Neo4j user has admin permissions. If the user is read/write only, run the steps below manually once.
 
 1. **Create the dedicated database** (Neo4j Enterprise only):
+
    ```cypher
    CREATE DATABASE `embedding-jobs` IF NOT EXISTS;
    ```
 
 2. **Grant permissions** for the job database user:
+
    ```cypher
    CREATE USER jobuser IF NOT EXISTS SET PASSWORD 'jobpassword';
    GRANT ROLE reader TO jobuser;
@@ -790,9 +800,9 @@ Additional diagnostic tools become available when debug mode is enabled:
 
 #### Batch repair workflow
 
-1. Omit `entity_name` to enter batch repair mode and use `limit` to control how many entities are retrieved from `getEntitiesWithoutEmbeddings(limit)` (default 10).  
-2. Run `force_generate_embedding` repeatedly with modest limits (5–20) until the batch returns zero entities, then raise the limit if the graph clearly needs more throughput.  
-3. After each batch, monitor the embedding job queue (`Neo4jJobStore`) to confirm jobs are being processed and adjust `limit` downwards if the workers lag or memory pressure increases.  
+1. Omit `entity_name` to enter batch repair mode and use `limit` to control how many entities are retrieved from `getEntitiesWithoutEmbeddings(limit)` (default 10).
+2. Run `force_generate_embedding` repeatedly with modest limits (5–20) until the batch returns zero entities, then raise the limit if the graph clearly needs more throughput.
+3. After each batch, monitor the embedding job queue (`Neo4jJobStore`) to confirm jobs are being processed and adjust `limit` downwards if the workers lag or memory pressure increases.
 4. For very large graphs (>10k entities) prefer `limit` values 5–10; medium graphs (1k–10k) can start at 10–15; small graphs (<1k) tolerate 20+ without significant strain.
 
 ### Developer Reset

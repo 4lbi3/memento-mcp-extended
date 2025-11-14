@@ -23,7 +23,13 @@ describe('Error classification', () => {
       config: {},
       data: {},
     };
-    const axiosError = new AxiosError('server failing', 'ECONNABORTED', undefined, undefined, response);
+    const axiosError = new AxiosError(
+      'server failing',
+      'ECONNABORTED',
+      undefined,
+      undefined,
+      response
+    );
     expect(classifyError(axiosError)).toBe(ErrorCategory.TRANSIENT);
   });
 

@@ -1,6 +1,9 @@
 import http from 'node:http';
 import { logger } from '../utils/logger.js';
-import type { Neo4jEmbeddingJobManager, HealthStatus } from '../embeddings/Neo4jEmbeddingJobManager.js';
+import type {
+  Neo4jEmbeddingJobManager,
+  HealthStatus,
+} from '../embeddings/Neo4jEmbeddingJobManager.js';
 
 const DEFAULT_HEALTH_PORT = 3001;
 const HEALTH_PATH = '/health';

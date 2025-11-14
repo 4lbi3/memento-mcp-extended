@@ -183,7 +183,9 @@ export class Neo4jSchemaManager {
     // Verify the constraints and indexes were created
     const constraints = await this.listConstraints();
     const uniquenessFound = constraints.some((c) => c.name === uniquenessConstraintName);
-    this.log(`EmbedJob uniqueness constraint verification: ${uniquenessFound ? 'FOUND' : 'NOT FOUND'}`);
+    this.log(
+      `EmbedJob uniqueness constraint verification: ${uniquenessFound ? 'FOUND' : 'NOT FOUND'}`
+    );
 
     const indexes = await this.listIndexes();
     const statusIndexFound = indexes.some((i) => i.name === statusIndexName);

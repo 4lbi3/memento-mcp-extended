@@ -9,6 +9,7 @@ Additionally, the current design requires the user to already know which entity 
 ## What Changes
 
 - **Transform tool into dual-mode operation:**
+
   - **Mode 1 (Specific Force)**: When `entity_name` is provided, force regenerate embedding for that specific entity
   - **Mode 2 (Batch Repair)**: When `entity_name` is absent, find and repair entities missing embeddings in safe batches
 
@@ -24,12 +25,14 @@ This change transforms the tool from a narrow debugging utility into a comprehen
 
 - **Affected specs:** `embedding-jobs`
 - **Affected code:**
+
   - `src/server/handlers/callToolHandler.ts` - Tool handler logic
   - `src/storage/interfaces.ts` - Add `getEntitiesWithoutEmbeddings` method to `IStorageProvider`
   - `src/storage/neo4j/Neo4jStorageProvider.ts` - Implement the new method
   - `src/server/tools.ts` - Update tool schema to document dual-mode behavior
 
 - **Benefits:**
+
   - Fixes the bug preventing entity discovery
   - Adds batch repair capability for operational maintenance
   - Prevents accidental graph-wide operations

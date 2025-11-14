@@ -3,9 +3,13 @@ import type { StorageProvider } from '../storage/StorageProvider.js';
 import type { EmbeddingService } from './EmbeddingService.js';
 import type { Entity } from '../KnowledgeGraphManager.js';
 import type { EntityEmbedding } from '../types/entity-embedding.js';
-import { Neo4jJobStore, type EnqueueJobParams, type JobProcessResults, type QueueStatus } from '../storage/neo4j/Neo4jJobStore.js';
+import type {
+  Neo4jJobStore,
+  EnqueueJobParams,
+  JobProcessResults,
+  QueueStatus,
+} from '../storage/neo4j/Neo4jJobStore.js';
 import crypto from 'crypto';
-import { logger } from '../utils/logger.js';
 import { classifyError, ErrorCategory } from '../utils/errors.js';
 
 /**
@@ -32,6 +36,10 @@ interface CacheOptions {
   // For test compatibility
   maxItems?: number;
   ttlHours?: number;
+}
+
+interface RecoveryOptions {
+  staleJobRecoveryIntervalMs?: number;
 }
 
 /**
@@ -81,10 +89,16 @@ const HEALTH_HISTORY_WINDOW = 100;
 const DEFAULT_MAX_JOB_RETRIES = 3;
 const DEFAULT_LOCK_DURATION_MS = 5 * 60 * 1000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
+const DEFAULT_STALE_JOB_RECOVERY_INTERVAL_MS = 60 * 1000;
 
 function parsePositiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 /**
@@ -117,6 +131,8 @@ export class Neo4jEmbeddingJobManager {
   private maxJobRetries: number;
   private jobLockDuration: number;
   private heartbeatInterval: number;
+  private staleJobRecoveryInterval: number;
+  private staleJobRecoveryTimer?: NodeJS.Timeout;
   private readonly jobHistory: Array<{ success: boolean; category?: ErrorCategory }> = [];
   private consecutiveFailures = 0;
   private errorPatterns: Record<ErrorCategory, number> = {
@@ -146,19 +162,45 @@ export class Neo4jEmbeddingJobManager {
     rateLimiterOptions?: RateLimiterOptions | null,
     cacheOptions?: CacheOptions | null,
     logger?: Logger | null,
-    workerId?: string
+    workerId?: string,
+    recoveryOptions?: RecoveryOptions | null
   ) {
     this.storageProvider = storageProvider;
     this.embeddingService = embeddingService;
     this.jobStore = jobStore;
     this.logger = logger || nullLogger;
     this.workerId = workerId || `worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    this.maxJobRetries = parsePositiveNumber(process.env.EMBED_JOB_MAX_RETRIES, DEFAULT_MAX_JOB_RETRIES);
-    this.jobLockDuration = parsePositiveNumber(process.env.EMBED_JOB_LOCK_DURATION_MS, DEFAULT_LOCK_DURATION_MS);
+    this.maxJobRetries = parsePositiveNumber(
+      process.env.EMBED_JOB_MAX_RETRIES,
+      DEFAULT_MAX_JOB_RETRIES
+    );
+    this.jobLockDuration = parsePositiveNumber(
+      process.env.EMBED_JOB_LOCK_DURATION_MS,
+      DEFAULT_LOCK_DURATION_MS
+    );
     this.heartbeatInterval = parsePositiveNumber(
       process.env.EMBED_JOB_HEARTBEAT_INTERVAL_MS,
       DEFAULT_HEARTBEAT_INTERVAL_MS
     );
+
+    this.staleJobRecoveryInterval =
+      recoveryOptions?.staleJobRecoveryIntervalMs ??
+      parseNonNegativeNumber(
+        process.env.EMBED_JOB_RECOVERY_INTERVAL,
+        DEFAULT_STALE_JOB_RECOVERY_INTERVAL_MS
+      );
+
+    if (this.staleJobRecoveryInterval > 0) {
+      void this.runStaleJobRecovery('startup');
+      this.staleJobRecoveryTimer = setInterval(() => {
+        void this.runStaleJobRecovery('interval');
+      }, this.staleJobRecoveryInterval);
+    } else {
+      this.logger.info('Stale job recovery disabled', {
+        workerId: this.workerId,
+        interval: this.staleJobRecoveryInterval,
+      });
+    }
 
     // Setup rate limiter with defaults
     const defaultRateLimiter = {
@@ -203,6 +245,7 @@ export class Neo4jEmbeddingJobManager {
       maxJobRetries: this.maxJobRetries,
       jobLockDuration: this.jobLockDuration,
       heartbeatInterval: this.heartbeatInterval,
+      staleJobRecoveryInterval: this.staleJobRecoveryInterval,
     });
   }
 
@@ -269,7 +312,11 @@ export class Neo4jEmbeddingJobManager {
       workerId: this.workerId,
     });
 
-    const leasedJobs = await this.jobStore.leaseJobs(batchSize, this.workerId, effectiveLockDuration);
+    const leasedJobs = await this.jobStore.leaseJobs(
+      batchSize,
+      this.workerId,
+      effectiveLockDuration
+    );
     this.logger.debug('Leased jobs for processing', {
       count: leasedJobs.length,
       lockDuration: effectiveLockDuration,
@@ -279,6 +326,34 @@ export class Neo4jEmbeddingJobManager {
       processed: 0,
       successful: 0,
       failed: 0,
+    };
+
+    const pendingJobIds = new Set(leasedJobs.map((job) => job.id));
+    const releaseUnstartedJobs = async (context: 'rate-limit' | 'cleanup'): Promise<void> => {
+      if (pendingJobIds.size === 0) {
+        return;
+      }
+
+      const jobIds = Array.from(pendingJobIds);
+      try {
+        const released = await this.jobStore.releaseJobs(jobIds, this.workerId);
+        this.logger.info('Released unstarted jobs', {
+          context,
+          requestedJobs: jobIds.length,
+          released,
+          workerId: this.workerId,
+        });
+      } catch (releaseError) {
+        this.logger.error('Failed to release unstarted jobs', {
+          context,
+          workerId: this.workerId,
+          jobCount: jobIds.length,
+          error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+          stack: releaseError instanceof Error ? releaseError.stack : undefined,
+        });
+      } finally {
+        pendingJobIds.clear();
+      }
     };
 
     const activeJobIds = new Set<string>();
@@ -294,7 +369,8 @@ export class Neo4jEmbeddingJobManager {
           .heartbeatJobs(Array.from(activeJobIds), this.workerId, effectiveLockDuration)
           .catch((heartbeatError) => {
             this.logger.warn('Heartbeat failed for active jobs', {
-              error: heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError),
+              error:
+                heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError),
               workerId: this.workerId,
               activeJobCount: activeJobIds.size,
             });
@@ -310,10 +386,12 @@ export class Neo4jEmbeddingJobManager {
             remainingJobs: leasedJobs.length - result.processed,
             workerId: this.workerId,
           });
+          await releaseUnstartedJobs('rate-limit');
           break;
         }
 
         activeJobIds.add(job.id);
+        pendingJobIds.delete(job.id);
 
         this.logger.info('Processing embedding job', {
           jobId: job.id,
@@ -419,6 +497,7 @@ export class Neo4jEmbeddingJobManager {
         }
       }
     } finally {
+      await releaseUnstartedJobs('cleanup');
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
       }
@@ -457,7 +536,7 @@ export class Neo4jEmbeddingJobManager {
     const deletedCount = await this.jobStore.scheduledCleanupJobs(retentionDays);
     this.logger.info('Cleaned up old completed/failed jobs', {
       count: deletedCount,
-      retentionDays
+      retentionDays,
     });
     return deletedCount;
   }
@@ -541,6 +620,41 @@ export class Neo4jEmbeddingJobManager {
     this.lastHealthState = newState;
   }
 
+  private async runStaleJobRecovery(trigger: 'startup' | 'interval'): Promise<void> {
+    try {
+      const recovered = await this.jobStore.recoverStaleJobs();
+      if (recovered > 0) {
+        this.logger.info('Recovered stale jobs', {
+          recovered,
+          trigger,
+          workerId: this.workerId,
+        });
+      } else {
+        this.logger.debug('Stale job recovery ran without recovering jobs', {
+          trigger,
+          workerId: this.workerId,
+        });
+      }
+    } catch (error) {
+      this.logger.error('Stale job recovery failed', {
+        trigger,
+        workerId: this.workerId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+  }
+
+  public stopStaleJobRecovery(): void {
+    if (!this.staleJobRecoveryTimer) {
+      return;
+    }
+
+    clearInterval(this.staleJobRecoveryTimer);
+    this.staleJobRecoveryTimer = undefined;
+    this.logger.debug('Stopped stale job recovery timer', { workerId: this.workerId });
+  }
+
   private incrementJobFailureStreak(jobId: string): number {
     const next = (this.jobFailureStreaks.get(jobId) ?? 0) + 1;
     this.jobFailureStreaks.set(jobId, next);
@@ -553,7 +667,7 @@ export class Neo4jEmbeddingJobManager {
    * @param lockDuration - How long to extend the lock
    * @returns Number of jobs heartbeated
    */
-  async heartbeatJobs(lockDuration = 5 * 60 * 1000): Promise<number> {
+  async heartbeatJobs(_lockDuration = 5 * 60 * 1000): Promise<number> {
     // For now, we don't track which jobs we have leased, so this is a no-op
     // In a real implementation, we'd track leased jobs and heartbeat them
     this.logger.debug('Heartbeat requested but not implemented for tracking leased jobs');
@@ -615,7 +729,7 @@ export class Neo4jEmbeddingJobManager {
    *
    * @returns Rate limiter status information
    */
-  getRateLimiterStatus() {
+  getRateLimiterStatus(): { availableTokens: number; maxTokens: number; resetInMs: number } {
     const now = Date.now();
     const elapsed = now - this.rateLimiter.lastRefill;
 

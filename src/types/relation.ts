@@ -98,9 +98,7 @@ export class RelationValidator {
       typeof obj.from === 'string' &&
       typeof obj.to === 'string' &&
       typeof obj.relationType === 'string' &&
-      (obj.strength === undefined ||
-        obj.strength === null ||
-        typeof obj.strength === 'number') &&
+      (obj.strength === undefined || obj.strength === null || typeof obj.strength === 'number') &&
       (obj.confidence === undefined ||
         obj.confidence === null ||
         typeof obj.confidence === 'number') &&

@@ -1,9 +1,11 @@
 # Fix Temporal Relationship Integrity
 
 ## Why
+
 The Neo4j storage provider has critical data integrity issues in its temporal versioning system that cause exponential proliferation of phantom relationships. This leads to graph corruption, unreliable semantic search, and storage bloat. The system must ensure that all entity versioning operations maintain complete bidirectional relationship integrity.
 
 ## What Changes
+
 - Refactor entity versioning operations to centralize logic and eliminate relationship orphaning
 - Add temporal validation to all relationship creation operations
 - Create comprehensive test coverage for temporal integrity
@@ -18,6 +20,7 @@ The Neo4j storage provider currently has **critical data integrity issues** in i
 When entities are versioned (creating a new version with `validTo` set on the old version), the system handles relationships inconsistently:
 
 - **`addObservations()`** ✅ **CORRECTLY**:
+
   1. Retrieves ALL relationships (incoming AND outgoing) from the old version
   2. Invalidates ALL old relationships by setting `validTo`
   3. Recreates ALL relationships pointing to the new entity version
@@ -39,6 +42,7 @@ All operations that create relationships fail to verify that target entities are
 - **`updateRelation()`**: Recreates relationships without verifying entity versions
 
 **Result:** Exponential proliferation of invalid relationships. In production:
+
 - 10 current entities
 - 25 current relationships
 - 27 total entities (17 archived versions)
@@ -57,6 +61,7 @@ All operations that create relationships fail to verify that target entities are
 Fix all temporal versioning operations to maintain relationship integrity through refactoring and validation:
 
 1. **Refactor: Extract Entity Versioning Logic (DRY Principle)**:
+
    - Create private method `_createNewEntityVersion()` to centralize complex versioning logic
    - Both `addObservations` and `deleteObservations` call this shared method
    - Eliminates ~100 lines of duplicated code
@@ -64,11 +69,13 @@ Fix all temporal versioning operations to maintain relationship integrity throug
    - Single point of maintenance for future bug fixes
 
 2. **Standardize `deleteObservations`** to use centralized versioning:
+
    - Calculate new observations array
    - Delegate to `_createNewEntityVersion()` for all versioning complexity
    - Automatic relationship integrity preservation
 
 3. **Add temporal validation to all relationship creation**:
+
    - Enforce `WHERE validTo IS NULL` in all entity matching queries
    - Verify target entities are current before creating relationships
    - Use current entity names (not cached/stale IDs) when recreating relationships
@@ -89,6 +96,7 @@ Fix all temporal versioning operations to maintain relationship integrity throug
 ## Scope
 
 This change affects:
+
 - `Neo4jStorageProvider._createNewEntityVersion()` - **ADDED** (new private method)
 - `Neo4jStorageProvider.deleteObservations()` - **MODIFIED** (refactored to use `_createNewEntityVersion`)
 - `Neo4jStorageProvider.addObservations()` - **MODIFIED** (refactored to use `_createNewEntityVersion`)
@@ -98,6 +106,7 @@ This change affects:
 - Test files for temporal integrity - **ADDED**
 
 Does NOT affect:
+
 - Public API contracts (method signatures unchanged)
 - MCP server handlers
 - Embedding system

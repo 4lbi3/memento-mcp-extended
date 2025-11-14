@@ -2,7 +2,7 @@ import { logger } from './logger.js';
 import { classifyError, ErrorCategory } from './errors.js';
 import { calculateRetryDelay, type RetryPolicy } from './retry.js';
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function runRecurringTask(
   taskName: string,

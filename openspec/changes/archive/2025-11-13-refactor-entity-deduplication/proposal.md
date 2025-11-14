@@ -3,6 +3,7 @@
 ## Why
 
 The current implementation of `createEntities` in `KnowledgeGraphManager` loads the entire knowledge graph into memory for deduplication, causing severe scalability issues. With graphs containing 100,000+ entities, every entity creation operation loads all entities into RAM, leading to:
+
 - Excessive memory consumption (potentially gigabytes per operation)
 - Linear performance degradation as the graph grows
 - Risk of Out-Of-Memory crashes in production

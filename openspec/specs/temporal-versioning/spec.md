@@ -1,14 +1,17 @@
 # Temporal Versioning Capability
 
 ## Purpose
+
 Ensure entity versioning operations maintain complete relationship integrity across all incoming and outgoing edges in the knowledge graph's temporal model.
 
 ## ADDED Requirements
 
 ### Requirement: Entity Observation Deletion Maintains Relationship Integrity
+
 When observations are deleted from an entity, the versioning system MUST preserve all relationships by invalidating old relationships and recreating them for the new entity version.
 
 #### Scenario: Delete observations recreates bidirectional relationships
+
 - **GIVEN** entity "Alice" with observation "likes coffee" has relationships:
   - Outgoing: Alice -[KNOWS]-> Bob
   - Incoming: Charlie -[KNOWS]-> Alice
@@ -23,6 +26,7 @@ When observations are deleted from an entity, the versioning system MUST preserv
   - Charlie -[KNOWS, validTo=null]-> New Alice(v2)
 
 #### Scenario: Delete observations with no relationships succeeds
+
 - **GIVEN** entity "Isolated" exists with no incoming or outgoing relationships
 - **WHEN** `deleteObservations([{entityName: "Isolated", observations: ["some data"]}])` is called
 - **THEN** a new version of "Isolated" is created successfully
@@ -30,6 +34,7 @@ When observations are deleted from an entity, the versioning system MUST preserv
 - **AND** no errors are thrown
 
 #### Scenario: Delete observations preserves relationship metadata
+
 - **GIVEN** entity "Alice" has relationship Alice -[KNOWS {strength: 0.9, confidence: 0.8}]-> Bob
 - **WHEN** observations are deleted from Alice
 - **THEN** the recreated relationship preserves:
@@ -41,9 +46,11 @@ When observations are deleted from an entity, the versioning system MUST preserv
 - **AND** only temporal fields are updated: `validFrom`, `updatedAt`
 
 ### Requirement: Entity Observation Addition Maintains Relationship Integrity
+
 When observations are added to an entity, the versioning system MUST preserve all relationships using current entity versions only.
 
 #### Scenario: Add observations uses current target entity versions
+
 - **GIVEN** entities Alice(v1) and Bob(v2-current) exist
 - **AND** relationship Alice(v1) -[KNOWS]-> Bob(v1-archived)
 - **WHEN** observations are added to Alice creating Alice(v2)
@@ -52,6 +59,7 @@ When observations are added to an entity, the versioning system MUST preserve al
 - **AND** NOT Alice(v2) -[KNOWS]-> Bob(v1-archived)
 
 #### Scenario: Add observations handles target entity not found
+
 - **GIVEN** entity Alice has relationship to entity Bob
 - **AND** Bob is completely deleted (no current version exists)
 - **WHEN** observations are added to Alice
@@ -60,9 +68,11 @@ When observations are added to an entity, the versioning system MUST preserve al
 - **AND** the operation succeeds with remaining valid relationships
 
 ### Requirement: Relationship Creation Validates Temporal Entity State
+
 All relationship creation operations MUST verify that both source and target entities are in their current version before creating the relationship.
 
 #### Scenario: Create relations only with current entities
+
 - **GIVEN** entities Alice(v2-current) and Bob(v2-current) exist
 - **AND** archived versions Alice(v1) and Bob(v1) exist
 - **WHEN** `createRelations([{from: "Alice", to: "Bob", relationType: "KNOWS"}])` is called
@@ -72,6 +82,7 @@ All relationship creation operations MUST verify that both source and target ent
 - **AND** does NOT create any cross-version relationships
 
 #### Scenario: Create relations fails when entity is archived
+
 - **GIVEN** entity Alice(v1) with `validTo = 12345` (archived)
 - **AND** no current version of Alice exists
 - **WHEN** `createRelations([{from: "Alice", to: "Bob", relationType: "KNOWS"}])` is called
@@ -80,6 +91,7 @@ All relationship creation operations MUST verify that both source and target ent
 - **AND** the operation continues without error
 
 #### Scenario: Create relations validates both source and target
+
 - **GIVEN** entity Alice(v2-current) exists
 - **AND** entity Bob(v1-archived) exists with no current version
 - **WHEN** `createRelations([{from: "Alice", to: "Bob", relationType: "KNOWS"}])` is called
@@ -88,9 +100,11 @@ All relationship creation operations MUST verify that both source and target ent
 - **AND** Alice remains without relationships to Bob
 
 ### Requirement: Update Relation Validates Temporal Entity State
+
 When updating a relation, the new version MUST connect to current entity versions only.
 
 #### Scenario: Update relation recreates with current entities
+
 - **GIVEN** current relationship Alice(v1) -[KNOWS]-> Bob(v1)
 - **AND** Alice is updated to v2, Bob is updated to v2
 - **WHEN** `updateRelation({from: "Alice", to: "Bob", relationType: "KNOWS", confidence: 0.95})` is called
@@ -100,6 +114,7 @@ When updating a relation, the new version MUST connect to current entity version
 - **AND** NOT Alice(v1) or Bob(v1)
 
 #### Scenario: Update relation fails when entity not current
+
 - **GIVEN** relationship Alice -[KNOWS]-> Bob
 - **AND** Alice's current version is archived (validTo = 12345)
 - **WHEN** `updateRelation({from: "Alice", to: "Bob", relationType: "KNOWS", confidence: 0.95})` is called
@@ -107,9 +122,11 @@ When updating a relation, the new version MUST connect to current entity version
 - **AND** no new relationship version is created
 
 ### Requirement: Graph Persistence Validates Temporal Entity State
+
 When persisting a complete knowledge graph, relationship creation MUST validate entity temporal state.
 
 #### Scenario: Save graph creates relationships only with current entities
+
 - **GIVEN** a knowledge graph with entities Alice(v2) and Bob(v2) marked as current
 - **AND** relations include Alice -[KNOWS]-> Bob
 - **WHEN** `saveGraph(graph)` is called
@@ -118,9 +135,11 @@ When persisting a complete knowledge graph, relationship creation MUST validate 
 - **AND** no relationships are created to archived versions
 
 ### Requirement: Temporal Query Consistency
+
 Point-in-time queries MUST return a consistent graph state where all relationships connect entities valid at that timestamp.
 
 #### Scenario: Get graph at time returns consistent relationships
+
 - **GIVEN** at timestamp T1: Alice(v1) -[KNOWS]-> Bob(v1)
 - **AND** at timestamp T2: Alice(v2) -[KNOWS]-> Bob(v2) (both updated)
 - **AND** at timestamp T3: Alice(v3) -[KNOWS]-> Bob(v2) (only Alice updated)
@@ -132,6 +151,7 @@ Point-in-time queries MUST return a consistent graph state where all relationshi
 - **AND** does NOT contain Alice(v1), Bob(v1), or mismatched versions
 
 #### Scenario: Current graph contains no phantom relationships
+
 - **GIVEN** multiple entity updates have occurred
 - **WHEN** `loadGraph()` is called to get current state
 - **THEN** all returned relationships have `validTo IS NULL`
@@ -144,6 +164,7 @@ Point-in-time queries MUST return a consistent graph state where all relationshi
 ### Neo4j Query Patterns
 
 **Entity Matching with Temporal Validation:**
+
 ```cypher
 MATCH (e:Entity {name: $name})
 WHERE e.validTo IS NULL
@@ -151,6 +172,7 @@ RETURN e
 ```
 
 **Relationship Creation with Temporal Validation:**
+
 ```cypher
 MATCH (from:Entity {name: $fromName})
 WHERE from.validTo IS NULL
@@ -165,6 +187,7 @@ CREATE (from)-[r:RELATES_TO {
 ```
 
 **Relationship Invalidation and Recreation Pattern:**
+
 ```cypher
 // Step 1: Invalidate old relationships
 MATCH (e:Entity {id: $oldId})
@@ -186,6 +209,7 @@ CREATE (newE:Entity {..., validTo: null})
 ```
 
 ### Affected Methods
+
 - `Neo4jStorageProvider._createNewEntityVersion()` - NEW private method (centralized versioning)
 - `Neo4jStorageProvider.deleteObservations()` - Refactored to use `_createNewEntityVersion`
 - `Neo4jStorageProvider.addObservations()` - Refactored to use `_createNewEntityVersion`
@@ -194,14 +218,20 @@ CREATE (newE:Entity {..., validTo: null})
 - `Neo4jStorageProvider.updateRelation()` - Add temporal validation
 
 ### Test Coverage
+
 Each scenario MUST have corresponding Vitest test in:
+
 - `src/storage/__vitest__/neo4j/Neo4jTemporalIntegrity.test.ts` (new file)
 - Updates to existing `Neo4jStorageProvider.test.ts`
+
 ## Requirements
+
 ### Requirement: Entity Observation Deletion Maintains Relationship Integrity
+
 When observations are deleted from an entity, the versioning system MUST preserve all relationships by invalidating old relationships and recreating them for the new entity version.
 
 #### Scenario: Delete observations recreates bidirectional relationships
+
 - **GIVEN** entity "Alice" with observation "likes coffee" has relationships:
   - Outgoing: Alice -[KNOWS]-> Bob
   - Incoming: Charlie -[KNOWS]-> Alice
@@ -216,6 +246,7 @@ When observations are deleted from an entity, the versioning system MUST preserv
   - Charlie -[KNOWS, validTo=null]-> New Alice(v2)
 
 #### Scenario: Delete observations with no relationships succeeds
+
 - **GIVEN** entity "Isolated" exists with no incoming or outgoing relationships
 - **WHEN** `deleteObservations([{entityName: "Isolated", observations: ["some data"]}])` is called
 - **THEN** a new version of "Isolated" is created successfully
@@ -223,6 +254,7 @@ When observations are deleted from an entity, the versioning system MUST preserv
 - **AND** no errors are thrown
 
 #### Scenario: Delete observations preserves relationship metadata
+
 - **GIVEN** entity "Alice" has relationship Alice -[KNOWS {strength: 0.9, confidence: 0.8}]-> Bob
 - **WHEN** observations are deleted from Alice
 - **THEN** the recreated relationship preserves:
@@ -234,9 +266,11 @@ When observations are deleted from an entity, the versioning system MUST preserv
 - **AND** only temporal fields are updated: `validFrom`, `updatedAt`
 
 ### Requirement: Entity Observation Addition Maintains Relationship Integrity
+
 When observations are added to an entity, the versioning system MUST preserve all relationships using current entity versions only.
 
 #### Scenario: Add observations uses current target entity versions
+
 - **GIVEN** entities Alice(v1) and Bob(v2-current) exist
 - **AND** relationship Alice(v1) -[KNOWS]-> Bob(v1-archived)
 - **WHEN** observations are added to Alice creating Alice(v2)
@@ -245,6 +279,7 @@ When observations are added to an entity, the versioning system MUST preserve al
 - **AND** NOT Alice(v2) -[KNOWS]-> Bob(v1-archived)
 
 #### Scenario: Add observations handles target entity not found
+
 - **GIVEN** entity Alice has relationship to entity Bob
 - **AND** Bob is completely deleted (no current version exists)
 - **WHEN** observations are added to Alice
@@ -253,9 +288,11 @@ When observations are added to an entity, the versioning system MUST preserve al
 - **AND** the operation succeeds with remaining valid relationships
 
 ### Requirement: Relationship Creation Validates Temporal Entity State
+
 All relationship creation operations MUST verify that both source and target entities are in their current version before creating the relationship.
 
 #### Scenario: Create relations only with current entities
+
 - **GIVEN** entities Alice(v2-current) and Bob(v2-current) exist
 - **AND** archived versions Alice(v1) and Bob(v1) exist
 - **WHEN** `createRelations([{from: "Alice", to: "Bob", relationType: "KNOWS"}])` is called
@@ -265,6 +302,7 @@ All relationship creation operations MUST verify that both source and target ent
 - **AND** does NOT create any cross-version relationships
 
 #### Scenario: Create relations fails when entity is archived
+
 - **GIVEN** entity Alice(v1) with `validTo = 12345` (archived)
 - **AND** no current version of Alice exists
 - **WHEN** `createRelations([{from: "Alice", to: "Bob", relationType: "KNOWS"}])` is called
@@ -273,6 +311,7 @@ All relationship creation operations MUST verify that both source and target ent
 - **AND** the operation continues without error
 
 #### Scenario: Create relations validates both source and target
+
 - **GIVEN** entity Alice(v2-current) exists
 - **AND** entity Bob(v1-archived) exists with no current version
 - **WHEN** `createRelations([{from: "Alice", to: "Bob", relationType: "KNOWS"}])` is called
@@ -281,9 +320,11 @@ All relationship creation operations MUST verify that both source and target ent
 - **AND** Alice remains without relationships to Bob
 
 ### Requirement: Update Relation Validates Temporal Entity State
+
 When updating a relation, the new version MUST connect to current entity versions only.
 
 #### Scenario: Update relation recreates with current entities
+
 - **GIVEN** current relationship Alice(v1) -[KNOWS]-> Bob(v1)
 - **AND** Alice is updated to v2, Bob is updated to v2
 - **WHEN** `updateRelation({from: "Alice", to: "Bob", relationType: "KNOWS", confidence: 0.95})` is called
@@ -293,6 +334,7 @@ When updating a relation, the new version MUST connect to current entity version
 - **AND** NOT Alice(v1) or Bob(v1)
 
 #### Scenario: Update relation fails when entity not current
+
 - **GIVEN** relationship Alice -[KNOWS]-> Bob
 - **AND** Alice's current version is archived (validTo = 12345)
 - **WHEN** `updateRelation({from: "Alice", to: "Bob", relationType: "KNOWS", confidence: 0.95})` is called
@@ -300,9 +342,11 @@ When updating a relation, the new version MUST connect to current entity version
 - **AND** no new relationship version is created
 
 ### Requirement: Graph Persistence Validates Temporal Entity State
+
 When persisting a complete knowledge graph, relationship creation MUST validate entity temporal state.
 
 #### Scenario: Save graph creates relationships only with current entities
+
 - **GIVEN** a knowledge graph with entities Alice(v2) and Bob(v2) marked as current
 - **AND** relations include Alice -[KNOWS]-> Bob
 - **WHEN** `saveGraph(graph)` is called
@@ -311,9 +355,11 @@ When persisting a complete knowledge graph, relationship creation MUST validate 
 - **AND** no relationships are created to archived versions
 
 ### Requirement: Temporal Query Consistency
+
 Point-in-time queries MUST return a consistent graph state where all relationships connect entities valid at that timestamp.
 
 #### Scenario: Get graph at time returns consistent relationships
+
 - **GIVEN** at timestamp T1: Alice(v1) -[KNOWS]-> Bob(v1)
 - **AND** at timestamp T2: Alice(v2) -[KNOWS]-> Bob(v2) (both updated)
 - **AND** at timestamp T3: Alice(v3) -[KNOWS]-> Bob(v2) (only Alice updated)
@@ -325,10 +371,10 @@ Point-in-time queries MUST return a consistent graph state where all relationshi
 - **AND** does NOT contain Alice(v1), Bob(v1), or mismatched versions
 
 #### Scenario: Current graph contains no phantom relationships
+
 - **GIVEN** multiple entity updates have occurred
 - **WHEN** `loadGraph()` is called to get current state
 - **THEN** all returned relationships have `validTo IS NULL`
 - **AND** all relationship endpoints have `validTo IS NULL`
 - **AND** count of relationships ≈ legitimate current relationships
 - **AND** NO relationships point to entities where `validTo IS NOT NULL`
-

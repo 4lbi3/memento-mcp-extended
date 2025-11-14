@@ -35,10 +35,7 @@ describeIntegration('Neo4j Integration Test', () => {
     });
 
     try {
-      await systemManager.executeQuery(
-        `CREATE DATABASE ${targetDatabase} IF NOT EXISTS WAIT`,
-        {}
-      );
+      await systemManager.executeQuery(`CREATE DATABASE ${targetDatabase} IF NOT EXISTS WAIT`, {});
     } catch (error) {
       console.warn('Unable to create integration database (it may already exist)', error);
     }
@@ -56,10 +53,7 @@ describeIntegration('Neo4j Integration Test', () => {
     await connectionManager.close();
 
     try {
-      await systemManager.executeQuery(
-        `DROP DATABASE ${targetDatabase} IF EXISTS WAIT`,
-        {}
-      );
+      await systemManager.executeQuery(`DROP DATABASE ${targetDatabase} IF EXISTS WAIT`, {});
     } catch (error) {
       console.warn('Unable to drop integration database (it may be in use)', error);
     }
