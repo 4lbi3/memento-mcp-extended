@@ -1,0 +1,52 @@
+[
+  {
+    "id": "fact_001",
+    "content": "Alberto Rocco is a software engineer who works at TechCorp in Milan, Italy. He specializes in artificial intelligence and machine learning.",
+    "category": "person"
+  },
+  {
+    "id": "fact_002",
+    "content": "TechCorp is a technology company founded in 2015. The company has offices in Milan, Rome, and Berlin, and employs over 500 people.",
+    "category": "organization"
+  },
+  {
+    "id": "fact_003",
+    "content": "The Memento MCP project is an open-source knowledge graph system designed for AI agents. It was created to provide persistent memory capabilities.",
+    "category": "project"
+  },
+  {
+    "id": "fact_004",
+    "content": "Neo4j is a graph database that Memento MCP uses for storing entities and relationships. It supports vector embeddings for semantic search.",
+    "category": "technology"
+  },
+  {
+    "id": "fact_005",
+    "content": "Milan is the second-largest city in Italy and a major financial center. It is known for fashion, design, and technology industries.",
+    "category": "location"
+  },
+  {
+    "id": "fact_006",
+    "content": "Alberto Rocco graduated from Politecnico di Milano with a Master's degree in Computer Science in 2018. His thesis focused on neural networks.",
+    "category": "person"
+  },
+  {
+    "id": "fact_007",
+    "content": "The Model Context Protocol (MCP) is a standard for connecting AI models with external tools and data sources. It enables seamless integration.",
+    "category": "technology"
+  },
+  {
+    "id": "fact_008",
+    "content": "TechCorp's main product is CloudFlow, a cloud-based workflow automation platform used by enterprise clients worldwide.",
+    "category": "product"
+  },
+  {
+    "id": "fact_009",
+    "content": "OpenAI provides embedding models like text-embedding-3-small that convert text into vector representations for semantic similarity.",
+    "category": "technology"
+  },
+  {
+    "id": "fact_010",
+    "content": "Alberto Rocco leads a team of 5 engineers at TechCorp. The team is working on integrating AI capabilities into CloudFlow.",
+    "category": "person"
+  }
+]
