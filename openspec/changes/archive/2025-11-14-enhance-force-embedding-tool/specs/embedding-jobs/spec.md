@@ -35,9 +35,9 @@ The `force_generate_embedding` MCP tool MUST support two distinct operational mo
 
 #### Scenario: Mode 1 - Force specific entity embedding
 
-- **GIVEN** an entity named "Alberto Rocco" exists in the graph
-- **WHEN** the tool is called with `entity_name: "Alberto Rocco"`
-- **THEN** the tool retrieves that specific entity via `getEntity("Alberto Rocco")`
+- **GIVEN** an entity named "Luca Bianchi" exists in the graph
+- **WHEN** the tool is called with `entity_name: "Luca Bianchi"`
+- **THEN** the tool retrieves that specific entity via `getEntity("Luca Bianchi")`
 - **AND** queues exactly one embedding job for that entity
 - **AND** returns success message identifying the entity
 

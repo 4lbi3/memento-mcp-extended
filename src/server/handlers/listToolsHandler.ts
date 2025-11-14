@@ -503,7 +503,7 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
             default: 10,
           },
         },
-        examples: [{ entity_name: 'Alberto Rocco' }, { limit: 20 }],
+        examples: [{ entity_name: 'Luca Bianchi' }, { limit: 20 }],
       },
     },
     {

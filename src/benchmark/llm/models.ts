@@ -11,6 +11,7 @@ export const MODELS: Record<string, ModelConfig> = {
     rpm: 15, // Requests Per Minute
     tpm: 250000, // Tokens Per Minute
     rpd: 1000, // Requests Per Day
+    minIntervalMs: 4_000, // Enforce at least one call every 4 seconds
   },
   'gemma-3': {
     name: 'gemma-3',

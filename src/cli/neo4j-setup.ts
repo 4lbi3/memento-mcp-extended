@@ -70,6 +70,20 @@ export function parseArgs(argv: string[]): {
   return { config, options };
 }
 
+function redactSensitiveConfig(config: Neo4jConfig): Record<string, unknown> {
+  const sanitizedConfig: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(config)) {
+    if (/password/i.test(key)) {
+      sanitizedConfig[key] = value ? '[REDACTED]' : value;
+    } else {
+      sanitizedConfig[key] = value;
+    }
+  }
+
+  return sanitizedConfig;
+}
+
 /**
  * Test the connection to Neo4j
  *
@@ -249,8 +263,8 @@ export async function main(): Promise<void> {
   console.log(`Arguments: ${args.join(' ')}`);
 
   const { config, options } = parseArgs(args);
-  console.log('Configuration:');
-  console.log(JSON.stringify(config, null, 2));
+  console.log('Configuration (passwords redacted):');
+  console.log(JSON.stringify(redactSensitiveConfig(config), null, 2));
 
   // Only mention debug mode if explicitly disabled
   if (!options.debug) {

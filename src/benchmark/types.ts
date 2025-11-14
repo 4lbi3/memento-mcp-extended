@@ -29,6 +29,7 @@ export interface ModelConfig {
   rpm: number; // Requests Per Minute
   tpm: number; // Tokens Per Minute
   rpd: number; // Requests Per Day
+  minIntervalMs?: number; // Optional minimum delay between consecutive requests
 }
 
 export interface Fact {

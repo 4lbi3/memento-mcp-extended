@@ -28,6 +28,8 @@ export class LLMClient {
   private apiKey: string;
   private rateLimiter: RateLimiter;
   private stats: LLMStats;
+  private readonly minimumIntervalMs: number;
+  private lastRequestTimestamp = 0;
 
   constructor(config: ModelConfig, apiKey: string) {
     this.config = config;
@@ -39,6 +41,7 @@ export class LLMClient {
       failedRequests: 0,
       totalRetries: 0,
     };
+    this.minimumIntervalMs = config.minIntervalMs ?? 0;
   }
 
   /**
@@ -71,6 +74,8 @@ export class LLMClient {
           await this.sleep(delayMs);
         }
 
+        await this.enforceInterRequestDelay();
+        this.lastRequestTimestamp = Date.now();
         const response = await this.makeAPICall(systemPrompt, userPrompt);
 
         // Update actual token usage
@@ -177,6 +182,20 @@ export class LLMClient {
    */
   private estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
+  }
+
+  /**
+   * Ensure a minimum delay between consecutive API calls when required
+   */
+  private async enforceInterRequestDelay(): Promise<void> {
+    if (!this.minimumIntervalMs || this.lastRequestTimestamp === 0) {
+      return;
+    }
+    const elapsed = Date.now() - this.lastRequestTimestamp;
+    const waitTime = this.minimumIntervalMs - elapsed;
+    if (waitTime > 0) {
+      await this.sleep(waitTime);
+    }
   }
 
   /**

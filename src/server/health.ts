@@ -57,7 +57,7 @@ export function startHealthServer(
       res.end(
         JSON.stringify({
           status: 'ERROR',
-          error: error instanceof Error ? error.message : String(error),
+          reason: 'Unable to evaluate health status',
         })
       );
     }

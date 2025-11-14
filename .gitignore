@@ -119,4 +119,4 @@ openspec/AGENTS.md
 
 # benchmarks
 benchmark.config.json
-benchmark-reports/
+benchmark-reports/*

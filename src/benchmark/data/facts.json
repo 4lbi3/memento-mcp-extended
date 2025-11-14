@@ -1,7 +1,7 @@
 [
   {
     "id": "fact_001",
-    "content": "Alberto Rocco is a software engineer who works at TechCorp in Milan, Italy. He specializes in artificial intelligence and machine learning.",
+    "content": "Luca Bianchi is a software engineer who works at TechCorp in Milan, Italy. He specializes in artificial intelligence and machine learning.",
     "category": "person"
   },
   {
@@ -26,7 +26,7 @@
   },
   {
     "id": "fact_006",
-    "content": "Alberto Rocco graduated from Politecnico di Milano with a Master's degree in Computer Science in 2018. His thesis focused on neural networks.",
+    "content": "Luca Bianchi graduated from Politecnico di Milano with a Master's degree in Computer Science in 2018. His thesis focused on neural networks.",
     "category": "person"
   },
   {
@@ -46,7 +46,7 @@
   },
   {
     "id": "fact_010",
-    "content": "Alberto Rocco leads a team of 5 engineers at TechCorp. The team is working on integrating AI capabilities into CloudFlow.",
+    "content": "Luca Bianchi leads a team of 5 engineers at TechCorp. The team is working on integrating AI capabilities into CloudFlow.",
     "category": "person"
   }
 ]

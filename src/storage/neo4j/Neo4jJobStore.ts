@@ -1,3 +1,4 @@
+import neo4j from 'neo4j-driver';
 import type { Neo4jConnectionManager } from './Neo4jConnectionManager.js';
 import { logger } from '../../utils/logger.js';
 
@@ -70,6 +71,20 @@ export interface QueueStatus {
 export class Neo4jJobStore {
   private connectionManager: Neo4jConnectionManager;
   private debug: boolean;
+
+  private static toNumber(value: unknown): number {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+    if (neo4j.isInt(value)) {
+      return neo4j.integer.toNumber(value);
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    const coerced = Number(value);
+    return Number.isFinite(coerced) ? coerced : 0;
+  }
 
   /**
    * Creates a new Neo4j job store
@@ -424,11 +439,11 @@ export class Neo4jJobStore {
 
     const record = result.records[0];
     const status = {
-      pending: (record.get('pending') as number) || 0,
-      processing: (record.get('processing') as number) || 0,
-      completed: (record.get('completed') as number) || 0,
-      failed: (record.get('failed') as number) || 0,
-      totalJobs: (record.get('total') as number) || 0,
+      pending: Neo4jJobStore.toNumber(record.get('pending')),
+      processing: Neo4jJobStore.toNumber(record.get('processing')),
+      completed: Neo4jJobStore.toNumber(record.get('completed')),
+      failed: Neo4jJobStore.toNumber(record.get('failed')),
+      totalJobs: Neo4jJobStore.toNumber(record.get('total')),
     };
 
     this.log(`Queue status: ${JSON.stringify(status)}`);

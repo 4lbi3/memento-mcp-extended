@@ -1,8 +1,8 @@
 [
   {
     "id": "q001",
-    "question": "Who is Alberto Rocco and what does he do?",
-    "goldAnswer": "Alberto Rocco is a software engineer who works at TechCorp in Milan, Italy. He specializes in artificial intelligence and machine learning, and leads a team of 5 engineers working on integrating AI capabilities into CloudFlow.",
+    "question": "Who is Luca Bianchi and what does he do?",
+    "goldAnswer": "Luca Bianchi is a software engineer who works at TechCorp in Milan, Italy. He specializes in artificial intelligence and machine learning, and leads a team of 5 engineers working on integrating AI capabilities into CloudFlow.",
     "category": "person",
     "relatedFactIds": ["fact_001", "fact_010"]
   },
@@ -22,8 +22,8 @@
   },
   {
     "id": "q004",
-    "question": "What is Alberto Rocco's educational background?",
-    "goldAnswer": "Alberto Rocco graduated from Politecnico di Milano with a Master's degree in Computer Science in 2018. His thesis focused on neural networks.",
+    "question": "What is Luca Bianchi's educational background?",
+    "goldAnswer": "Luca Bianchi graduated from Politecnico di Milano with a Master's degree in Computer Science in 2018. His thesis focused on neural networks.",
     "category": "person",
     "relatedFactIds": ["fact_006"]
   },
@@ -51,7 +51,7 @@
   {
     "id": "q008",
     "question": "What is CloudFlow?",
-    "goldAnswer": "CloudFlow is TechCorp's main product, a cloud-based workflow automation platform used by enterprise clients worldwide. Alberto Rocco's team is working on integrating AI capabilities into it.",
+    "goldAnswer": "CloudFlow is TechCorp's main product, a cloud-based workflow automation platform used by enterprise clients worldwide. Luca Bianchi's team is working on integrating AI capabilities into it.",
     "category": "product",
     "relatedFactIds": ["fact_008", "fact_010"]
   },
@@ -64,8 +64,8 @@
   },
   {
     "id": "q010",
-    "question": "How many people work in Alberto Rocco's team and what are they working on?",
-    "goldAnswer": "Alberto Rocco leads a team of 5 engineers at TechCorp who are working on integrating AI capabilities into CloudFlow.",
+    "question": "How many people work in Luca Bianchi's team and what are they working on?",
+    "goldAnswer": "Luca Bianchi leads a team of 5 engineers at TechCorp who are working on integrating AI capabilities into CloudFlow.",
     "category": "person",
     "relatedFactIds": ["fact_010"]
   }
