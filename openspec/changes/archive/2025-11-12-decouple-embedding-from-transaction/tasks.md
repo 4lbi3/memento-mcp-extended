@@ -1,6 +1,7 @@
 # Implementation Tasks
 
 ## 1. Code Modification
+
 - [ ] 1.1 Remove synchronous embedding generation from `Neo4jStorageProvider.createEntities` (lines 639-668)
   - Remove the entire conditional block that calls `this.embeddingService.generateEmbedding()`
   - Remove the `embedding` parameter from entity creation
@@ -13,6 +14,7 @@
   - No changes needed - already correct
 
 ## 2. Testing
+
 - [ ] 2.1 Update existing tests for `Neo4jStorageProvider.createEntities`
   - Remove expectations for synchronous embedding generation
   - Verify entities are created without embeddings
@@ -24,6 +26,7 @@
   - Assert transaction completes in <200ms (vs previous ~20s)
 
 ## 3. Documentation
+
 - [ ] 3.1 Update code comments in `Neo4jStorageProvider.createEntities`
   - Document that embeddings are handled asynchronously
   - Reference the job manager for embedding generation
@@ -32,6 +35,7 @@
   - Note that embeddings are now eventually consistent
 
 ## 4. Validation
+
 - [ ] 4.1 Run `openspec validate decouple-embedding-from-transaction --strict`
 - [ ] 4.2 Run full test suite: `npm test`
 - [ ] 4.3 Run integration tests with Neo4j: `npm run test:integration`

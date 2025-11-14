@@ -60,7 +60,9 @@ try {
     embedJobRetentionDays: neo4jConfig.embedJobRetentionDays,
   });
 } catch (error) {
-  logger.error('Invalid Neo4j configuration', { error: error instanceof Error ? error.message : String(error) });
+  logger.error('Invalid Neo4j configuration', {
+    error: error instanceof Error ? error.message : String(error),
+  });
   process.exit(1);
 }
 
@@ -183,32 +185,41 @@ try {
     logger
   );
 
-  const shouldStartBackgroundTasks =
-    !process.env.VITEST && !process.env.NODE_ENV?.includes('test');
+  const shouldStartBackgroundTasks = !process.env.VITEST && !process.env.NODE_ENV?.includes('test');
 
   if (shouldStartBackgroundTasks) {
-    void runRecurringTask('embedding job processing', EMBEDDING_PROCESS_INTERVAL, async () => {
-      if (!embeddingJobManager) {
-        logger.warn('Skipping job processing; manager not initialized');
-        return;
-      }
-      await embeddingJobManager.processJobs(10);
-    }, JOB_RETRY_POLICY);
+    void runRecurringTask(
+      'embedding job processing',
+      EMBEDDING_PROCESS_INTERVAL,
+      async () => {
+        if (!embeddingJobManager) {
+          logger.warn('Skipping job processing; manager not initialized');
+          return;
+        }
+        await embeddingJobManager.processJobs(10);
+      },
+      JOB_RETRY_POLICY
+    );
 
-    void runRecurringTask('embedding job cleanup', CLEANUP_INTERVAL, async () => {
-      if (!embeddingJobManager) {
-        logger.warn('Skipping job cleanup; manager not initialized');
-        return;
-      }
-      const retentionDays = neo4jConfig.embedJobRetentionDays || 14;
-      const deletedCount = await embeddingJobManager.cleanupJobs(retentionDays);
-      if (deletedCount && deletedCount > 0) {
-        logger.info('Scheduled job cleanup completed', {
-          deletedCount,
-          retentionDays,
-        });
-      }
-    }, JOB_RETRY_POLICY);
+    void runRecurringTask(
+      'embedding job cleanup',
+      CLEANUP_INTERVAL,
+      async () => {
+        if (!embeddingJobManager) {
+          logger.warn('Skipping job cleanup; manager not initialized');
+          return;
+        }
+        const retentionDays = neo4jConfig.embedJobRetentionDays || 14;
+        const deletedCount = await embeddingJobManager.cleanupJobs(retentionDays);
+        if (deletedCount && deletedCount > 0) {
+          logger.info('Scheduled job cleanup completed', {
+            deletedCount,
+            retentionDays,
+          });
+        }
+      },
+      JOB_RETRY_POLICY
+    );
 
     startHealthServer(embeddingJobManager);
   } else {

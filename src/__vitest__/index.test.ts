@@ -227,7 +227,9 @@ describe('Memory Server Main Function', () => {
 
   test('configuration validation logic works correctly', async () => {
     // Test the validation function directly since module-level testing is complex
-    const { validateNeo4jConfig, DEFAULT_NEO4J_CONFIG } = await import('../storage/neo4j/Neo4jConfig.js');
+    const { validateNeo4jConfig, DEFAULT_NEO4J_CONFIG } = await import(
+      '../storage/neo4j/Neo4jConfig.js'
+    );
 
     // Should fail when retention days is undefined
     const invalidConfig = { ...DEFAULT_NEO4J_CONFIG };

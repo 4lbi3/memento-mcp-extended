@@ -7,7 +7,7 @@ import { Neo4jConnectionManager } from './Neo4jConnectionManager.js';
 import { DEFAULT_NEO4J_CONFIG, type Neo4jConfig } from './Neo4jConfig.js';
 import { Neo4jSchemaManager } from './Neo4jSchemaManager.js';
 import { logger } from '../../utils/logger.js';
-import { classifyError, ErrorCategory } from '../../utils/errors.js';
+import { classifyError, type ErrorCategory } from '../../utils/errors.js';
 import neo4j from 'neo4j-driver';
 import { Neo4jVectorStore } from './Neo4jVectorStore.js';
 import { EmbeddingServiceFactory } from '../../embeddings/EmbeddingServiceFactory.js';
@@ -706,7 +706,11 @@ export class Neo4jStorageProvider implements StorageProvider {
               if (newObservations.length > 0) {
                 // Step 2b: New observations found - create new version with merged observations
                 const mergedObservations = [...currentObservations, ...newObservations];
-                const versionResult = await this._createNewEntityVersion(txc, entity.name, mergedObservations);
+                const versionResult = await this._createNewEntityVersion(
+                  txc,
+                  entity.name,
+                  mergedObservations
+                );
 
                 if (versionResult.success) {
                   // Query for the updated entity within the same transaction
@@ -1048,7 +1052,9 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       // Log warning if target entity no longer exists
       if (result.records.length === 0) {
-        logger.warn(`Failed to recreate outgoing relationship to ${outRel.to.properties.name} - target entity not found in current state`);
+        logger.warn(
+          `Failed to recreate outgoing relationship to ${outRel.to.properties.name} - target entity not found in current state`
+        );
       }
     }
 
@@ -1096,7 +1102,9 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       // Log warning if source entity no longer exists
       if (result.records.length === 0) {
-        logger.warn(`Failed to recreate incoming relationship from ${inRel.from.properties.name} - source entity not found in current state`);
+        logger.warn(
+          `Failed to recreate incoming relationship from ${inRel.from.properties.name} - source entity not found in current state`
+        );
       }
     }
 

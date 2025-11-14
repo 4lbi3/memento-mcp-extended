@@ -103,89 +103,98 @@ describe('Neo4j Temporal Integrity', () => {
       const incomingCalls: Record<string, unknown>[] = [];
       const now = Date.now();
 
-      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
-        if (query.includes('collect(DISTINCT {rel: r, to: to})')) {
-          return {
-            records: [
-              {
-                get: (key: string) => {
-                  if (key === 'e') {
-                    return {
-                      properties: {
-                        id: 'entity-id',
-                        name: 'EntityA',
-                        entityType: 'Person',
-                        observations: JSON.stringify(['obs-a']),
-                        version: 1,
-                        createdAt: now - 5000,
-                      },
-                    };
-                  }
-                  if (key === 'outgoing') {
-                    return [
-                      {
-                        rel: {
-                          properties: {
-                            id: 'rel-out',
-                            relationType: 'KNOWS',
-                            strength: 0.9,
-                            confidence: 0.8,
-                            metadata: { channel: 'sensor' },
-                            version: 1,
-                            createdAt: now - 4000,
-                          },
+      mockTransaction.run.mockImplementation(
+        async (query: string, params: Record<string, unknown>) => {
+          if (query.includes('collect(DISTINCT {rel: r, to: to})')) {
+            return {
+              records: [
+                {
+                  get: (key: string) => {
+                    if (key === 'e') {
+                      return {
+                        properties: {
+                          id: 'entity-id',
+                          name: 'EntityA',
+                          entityType: 'Person',
+                          observations: JSON.stringify(['obs-a']),
+                          version: 1,
+                          createdAt: now - 5000,
                         },
-                        to: { properties: { name: 'EntityB' } },
-                      },
-                    ];
-                  }
-                  if (key === 'incoming') {
-                    return [
-                      {
-                        rel: {
-                          properties: {
-                            id: 'rel-in',
-                            relationType: 'MENTIONS',
-                            strength: 0.7,
-                            confidence: 0.95,
-                            metadata: { source: 'feed' },
-                            version: 2,
-                            createdAt: now - 3000,
+                      };
+                    }
+                    if (key === 'outgoing') {
+                      return [
+                        {
+                          rel: {
+                            properties: {
+                              id: 'rel-out',
+                              relationType: 'KNOWS',
+                              strength: 0.9,
+                              confidence: 0.8,
+                              metadata: { channel: 'sensor' },
+                              version: 1,
+                              createdAt: now - 4000,
+                            },
                           },
+                          to: { properties: { name: 'EntityB' } },
                         },
-                        from: { properties: { name: 'EntityC' } },
-                      },
-                    ];
-                  }
-                  return null;
+                      ];
+                    }
+                    if (key === 'incoming') {
+                      return [
+                        {
+                          rel: {
+                            properties: {
+                              id: 'rel-in',
+                              relationType: 'MENTIONS',
+                              strength: 0.7,
+                              confidence: 0.95,
+                              metadata: { source: 'feed' },
+                              version: 2,
+                              createdAt: now - 3000,
+                            },
+                          },
+                          from: { properties: { name: 'EntityC' } },
+                        },
+                      ];
+                    }
+                    return null;
+                  },
                 },
-              },
-            ],
-          };
-        }
+              ],
+            };
+          }
 
-        if (query.includes('SET e.validTo = $now')) {
+          if (query.includes('SET e.validTo = $now')) {
+            return { records: [] };
+          }
+
+          if (query.trim().startsWith('CREATE (e:Entity')) {
+            return { records: [{ get: () => ({ properties: { id: 'new-entity-id' } }) }] };
+          }
+
+          if (query.includes('MATCH (from:Entity {id: $fromId})')) {
+            outgoingCalls.push(params);
+            return { records: [{ get: () => ({}) }] };
+          }
+
+          if (
+            query.includes('MATCH (from:Entity {name: $fromName})') &&
+            query.includes('MATCH (to:Entity {id: $toId})')
+          ) {
+            incomingCalls.push(params);
+            return { records: [{ get: () => ({}) }] };
+          }
+
           return { records: [] };
         }
+      );
 
-        if (query.trim().startsWith('CREATE (e:Entity')) {
-          return { records: [{ get: () => ({ properties: { id: 'new-entity-id' } }) }] };
-        }
-
-        if (query.includes('MATCH (from:Entity {id: $fromId})')) {
-          outgoingCalls.push(params);
-          return { records: [{ get: () => ({}) }] };
-        }
-
-        if (query.includes('MATCH (from:Entity {name: $fromName})') && query.includes('MATCH (to:Entity {id: $toId})')) {
-          incomingCalls.push(params);
-          return { records: [{ get: () => ({}) }] };
-        }
-
-        return { records: [] };
-      });
-
-      const result = await (storageProvider as any)._createNewEntityVersion(mockTransaction, 'EntityA', ['obs-a', 'obs-b']);
+      const result = await (storageProvider as any)._createNewEntityVersion(
+        mockTransaction,
+        'EntityA',
+        ['obs-a', 'obs-b']
+      );
 
       expect(result.success).toBe(true);
       expect(outgoingCalls).toHaveLength(1);
@@ -262,42 +271,44 @@ describe('Neo4j Temporal Integrity', () => {
       const versionSpy = vi.spyOn(storageProvider as any, '_createNewEntityVersion');
       const createQueries: Array<Record<string, unknown>> = [];
 
-      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
-        if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+      mockTransaction.run.mockImplementation(
+        async (query: string, params: Record<string, unknown>) => {
+          if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+            return { records: [] };
+          }
+
+          if (query.includes('CREATE (e:Entity')) {
+            createQueries.push(params);
+            return {
+              records: [
+                {
+                  get: (key: string) => {
+                    if (key === 'e') {
+                      return {
+                        properties: {
+                          id: 'new-id',
+                          name: params.name,
+                          entityType: params.entityType,
+                          observations: params.observations,
+                          version: params.version,
+                          createdAt: params.createdAt,
+                          updatedAt: params.updatedAt,
+                          validFrom: params.validFrom,
+                          validTo: null,
+                          changedBy: params.changedBy ?? null,
+                        },
+                      };
+                    }
+                    return undefined;
+                  },
+                },
+              ],
+            };
+          }
+
           return { records: [] };
         }
-
-        if (query.includes('CREATE (e:Entity')) {
-          createQueries.push(params);
-          return {
-            records: [
-              {
-                get: (key: string) => {
-                  if (key === 'e') {
-                    return {
-                      properties: {
-                        id: 'new-id',
-                        name: params.name,
-                        entityType: params.entityType,
-                        observations: params.observations,
-                        version: params.version,
-                        createdAt: params.createdAt,
-                        updatedAt: params.updatedAt,
-                        validFrom: params.validFrom,
-                        validTo: null,
-                        changedBy: params.changedBy ?? null,
-                      },
-                    };
-                  }
-                  return undefined;
-                },
-              },
-            ],
-          };
-        }
-
-        return { records: [] };
-      });
+      );
 
       const entities = [{ name: 'FreshEntity', entityType: 'person', observations: ['fact1'] }];
       const result = await storageProvider.createEntities(entities);
@@ -317,10 +328,33 @@ describe('Neo4j Temporal Integrity', () => {
         .mockResolvedValue({ entityName: 'MergedEntity', success: true });
 
       let matchCalls = 0;
-      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
-        if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
-          matchCalls += 1;
-          if (matchCalls === 1) {
+      mockTransaction.run.mockImplementation(
+        async (query: string, params: Record<string, unknown>) => {
+          if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+            matchCalls += 1;
+            if (matchCalls === 1) {
+              return {
+                records: [
+                  {
+                    get: () => ({
+                      properties: {
+                        id: 'existing-id',
+                        name: params.name,
+                        entityType: 'person',
+                        observations: JSON.stringify(['fact1']),
+                        version: 2,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        validFrom: 1,
+                        validTo: null,
+                        changedBy: null,
+                      },
+                    }),
+                  },
+                ],
+              };
+            }
+
             return {
               records: [
                 {
@@ -329,11 +363,11 @@ describe('Neo4j Temporal Integrity', () => {
                       id: 'existing-id',
                       name: params.name,
                       entityType: 'person',
-                      observations: JSON.stringify(['fact1']),
-                      version: 2,
+                      observations: JSON.stringify(['fact1', 'fact2']),
+                      version: 3,
                       createdAt: 1,
-                      updatedAt: 1,
-                      validFrom: 1,
+                      updatedAt: 2,
+                      validFrom: 2,
                       validTo: null,
                       changedBy: null,
                     },
@@ -343,36 +377,18 @@ describe('Neo4j Temporal Integrity', () => {
             };
           }
 
-          return {
-            records: [
-              {
-                get: () => ({
-                  properties: {
-                    id: 'existing-id',
-                    name: params.name,
-                    entityType: 'person',
-                    observations: JSON.stringify(['fact1', 'fact2']),
-                    version: 3,
-                    createdAt: 1,
-                    updatedAt: 2,
-                    validFrom: 2,
-                    validTo: null,
-                    changedBy: null,
-                  },
-                }),
-              },
-            ],
-          };
+          return { records: [] };
         }
-
-        return { records: [] };
-      });
+      );
 
       const entities = [{ name: 'MergedEntity', entityType: 'person', observations: ['fact2'] }];
       const result = await storageProvider.createEntities(entities);
 
       expect(versionSpy).toHaveBeenCalledTimes(1);
-      expect(versionSpy).toHaveBeenCalledWith(expect.anything(), 'MergedEntity', ['fact1', 'fact2']);
+      expect(versionSpy).toHaveBeenCalledWith(expect.anything(), 'MergedEntity', [
+        'fact1',
+        'fact2',
+      ]);
       expect(result).toHaveLength(1);
       expect(result[0].observations).toEqual(['fact1', 'fact2']);
 
@@ -382,34 +398,38 @@ describe('Neo4j Temporal Integrity', () => {
     it('skips versioning when observations are identical (idempotent)', async () => {
       const versionSpy = vi.spyOn(storageProvider as any, '_createNewEntityVersion');
 
-      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
-        if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
-          return {
-            records: [
-              {
-                get: () => ({
-                  properties: {
-                    id: 'existing-id',
-                    name: params.name,
-                    entityType: 'person',
-                    observations: JSON.stringify(['fact1', 'fact2']),
-                    version: 5,
-                    createdAt: 10,
-                    updatedAt: 10,
-                    validFrom: 10,
-                    validTo: null,
-                    changedBy: null,
-                  },
-                }),
-              },
-            ],
-          };
+      mockTransaction.run.mockImplementation(
+        async (query: string, params: Record<string, unknown>) => {
+          if (query.includes('MATCH (e:Entity {name: $name, validTo: NULL})')) {
+            return {
+              records: [
+                {
+                  get: () => ({
+                    properties: {
+                      id: 'existing-id',
+                      name: params.name,
+                      entityType: 'person',
+                      observations: JSON.stringify(['fact1', 'fact2']),
+                      version: 5,
+                      createdAt: 10,
+                      updatedAt: 10,
+                      validFrom: 10,
+                      validTo: null,
+                      changedBy: null,
+                    },
+                  }),
+                },
+              ],
+            };
+          }
+
+          return { records: [] };
         }
+      );
 
-        return { records: [] };
-      });
-
-      const entities = [{ name: 'StableEntity', entityType: 'person', observations: ['fact1', 'fact2'] }];
+      const entities = [
+        { name: 'StableEntity', entityType: 'person', observations: ['fact1', 'fact2'] },
+      ];
       const result = await storageProvider.createEntities(entities);
 
       expect(result).toHaveLength(1);
@@ -463,7 +483,9 @@ describe('Neo4j Temporal Integrity', () => {
     it('skips creation and logs when entities are archived', async () => {
       mockTransaction.run.mockResolvedValueOnce({ records: [] });
 
-      const created = await storageProvider.createRelations([{ from: 'Old', to: 'Archived', relationType: 'KNOWS' }]);
+      const created = await storageProvider.createRelations([
+        { from: 'Old', to: 'Archived', relationType: 'KNOWS' },
+      ]);
 
       expect(created).toHaveLength(0);
       expect(warnSpy).toHaveBeenCalledWith(
@@ -587,7 +609,9 @@ describe('Neo4j Temporal Integrity', () => {
           return { records: [] };
         });
 
-      await storageProvider.deleteObservations([{ entityName: 'EntityA', observations: ['obs-b'] }]);
+      await storageProvider.deleteObservations([
+        { entityName: 'EntityA', observations: ['obs-b'] },
+      ]);
 
       expect(outgoingCalls).toHaveLength(1);
       expect(outgoingCalls[0].version).toBe(3);

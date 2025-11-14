@@ -98,9 +98,15 @@ export class Neo4jJobStore {
    * @returns Job ID if created, null if job already exists
    */
   async enqueueJob(params: EnqueueJobParams): Promise<string | null> {
-    const { entity_uid, model, version, priority = 1, max_attempts = 3 } = params;
+    const {
+      entity_uid: entityUid,
+      model,
+      version,
+      priority = 1,
+      max_attempts: maxAttempts = 3,
+    } = params;
 
-    this.log(`Enqueuing job for entity ${entity_uid}, model ${model}, version ${version}`);
+    this.log(`Enqueuing job for entity ${entityUid}, model ${model}, version ${version}`);
 
     const query = `
       MERGE (job:EmbedJob {
@@ -130,11 +136,11 @@ export class Neo4jJobStore {
     `;
 
     const result = await this.connectionManager.executeQuery(query, {
-      entity_uid,
+      entity_uid: entityUid,
       model,
       version,
       priority,
-      max_attempts,
+      max_attempts: maxAttempts,
     });
 
     if (result.records.length === 0) {
@@ -164,7 +170,11 @@ export class Neo4jJobStore {
    * @param lockDuration Duration in milliseconds for which jobs should be locked
    * @returns Array of leased jobs
    */
-  async leaseJobs(batchSize: number, lockOwner: string, lockDuration: number): Promise<LeasedJob[]> {
+  async leaseJobs(
+    batchSize: number,
+    lockOwner: string,
+    lockDuration: number
+  ): Promise<LeasedJob[]> {
     this.log(`Leasing up to ${batchSize} jobs for owner ${lockOwner}`);
 
     const query = `
@@ -201,14 +211,7 @@ export class Neo4jJobStore {
       lockDuration,
     });
 
-    const leasedJobs: LeasedJob[] = result.records.map((record) => {
-      const job = record.get('job') as Record<string, any>;
-      return {
-        ...job,
-        lock_owner: job.lock_owner,
-        lock_until: job.lock_until,
-      } as LeasedJob;
-    });
+    const leasedJobs: LeasedJob[] = result.records.map((record) => record.get('job') as LeasedJob);
 
     this.log(`Leased ${leasedJobs.length} jobs`);
     return leasedJobs;
@@ -244,9 +247,69 @@ export class Neo4jJobStore {
       lockDuration,
     });
 
-    const updated = result.records[0]?.get('updated') as number || 0;
+    const updated = (result.records[0]?.get('updated') as number) || 0;
     this.log(`Heartbeated ${updated} jobs`);
     return updated;
+  }
+
+  /**
+   * Release leases for a batch of jobs owned by a specific worker
+   *
+   * @param jobIds IDs of the jobs to release
+   * @param lockOwner The current owner of the jobs
+   * @returns Number of jobs released
+   */
+  async releaseJobs(jobIds: string[], lockOwner: string): Promise<number> {
+    if (jobIds.length === 0) {
+      this.log('releaseJobs called with no job IDs; skipping');
+      return 0;
+    }
+
+    this.log(`Releasing ${jobIds.length} jobs for owner ${lockOwner}`);
+
+    const query = `
+      MATCH (job:EmbedJob)
+      WHERE job.id IN $jobIds
+      AND job.lock_owner = $lockOwner
+      AND job.status = 'processing'
+      SET job.status = 'pending',
+          job.lock_owner = null,
+          job.lock_until = null
+      RETURN count(job) as released
+    `;
+
+    const result = await this.connectionManager.executeQuery(query, {
+      jobIds,
+      lockOwner,
+    });
+
+    const released = (result.records[0]?.get('released') as number) || 0;
+    this.log(`Released ${released} leases`);
+    return released;
+  }
+
+  /**
+   * Recover jobs that are stuck in processing with expired locks
+   *
+   * @returns Number of jobs recovered
+   */
+  async recoverStaleJobs(): Promise<number> {
+    this.log('Recovering stale jobs');
+
+    const query = `
+      MATCH (job:EmbedJob)
+      WHERE job.status = 'processing'
+      AND job.lock_until < timestamp()
+      SET job.status = 'pending',
+          job.lock_owner = null,
+          job.lock_until = null
+      RETURN count(job) as recovered
+    `;
+
+    const result = await this.connectionManager.executeQuery(query, {});
+    const recovered = (result.records[0]?.get('recovered') as number) || 0;
+    this.log(`Recovered ${recovered} stale jobs`);
+    return recovered;
   }
 
   /**
@@ -274,7 +337,7 @@ export class Neo4jJobStore {
       lockOwner,
     });
 
-    const updated = result.records[0]?.get('updated') as number || 0;
+    const updated = (result.records[0]?.get('updated') as number) || 0;
     const success = updated > 0;
 
     this.log(`Job completion ${success ? 'successful' : 'failed'}: ${jobId}`);
@@ -322,7 +385,7 @@ export class Neo4jJobStore {
       permanent: options?.permanent || false,
     });
 
-    const updated = result.records[0]?.get('updated') as number || 0;
+    const updated = (result.records[0]?.get('updated') as number) || 0;
     const success = updated > 0;
 
     this.log(`Job failure ${success ? 'successful' : 'failed'}: ${jobId}`);
@@ -361,11 +424,11 @@ export class Neo4jJobStore {
 
     const record = result.records[0];
     const status = {
-      pending: record.get('pending') as number || 0,
-      processing: record.get('processing') as number || 0,
-      completed: record.get('completed') as number || 0,
-      failed: record.get('failed') as number || 0,
-      totalJobs: record.get('total') as number || 0,
+      pending: (record.get('pending') as number) || 0,
+      processing: (record.get('processing') as number) || 0,
+      completed: (record.get('completed') as number) || 0,
+      failed: (record.get('failed') as number) || 0,
+      totalJobs: (record.get('total') as number) || 0,
     };
 
     this.log(`Queue status: ${JSON.stringify(status)}`);
@@ -393,7 +456,7 @@ export class Neo4jJobStore {
     `;
 
     const result = await this.connectionManager.executeQuery(query, {});
-    const reset = result.records[0]?.get('reset') as number || 0;
+    const reset = (result.records[0]?.get('reset') as number) || 0;
 
     this.log(`Reset ${reset} failed jobs for retry`);
     return reset;
@@ -408,18 +471,21 @@ export class Neo4jJobStore {
   async cleanupJobs(retentionDays = 14): Promise<number> {
     // For backward compatibility, if a very large number is passed, assume it's milliseconds
     // Convert to days (any value > 100 is likely milliseconds)
-    const actualRetentionDays = retentionDays > 100
-      ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
-      : retentionDays;
+    const actualRetentionDays =
+      retentionDays > 100
+        ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
+        : retentionDays;
 
     // Validate retention days
     if (actualRetentionDays < 7 || actualRetentionDays > 30) {
       throw new Error(`Retention days must be between 7 and 30, got ${actualRetentionDays}`);
     }
 
-    const cutoffTime = Date.now() - (actualRetentionDays * 24 * 60 * 60 * 1000);
+    const cutoffTime = Date.now() - actualRetentionDays * 24 * 60 * 60 * 1000;
 
-    this.log(`Cleaning up completed/failed jobs older than ${new Date(cutoffTime).toISOString()} (${actualRetentionDays} days retention)`);
+    this.log(
+      `Cleaning up completed/failed jobs older than ${new Date(cutoffTime).toISOString()} (${actualRetentionDays} days retention)`
+    );
 
     const query = `
       MATCH (job:EmbedJob)
@@ -431,7 +497,7 @@ export class Neo4jJobStore {
     `;
 
     const result = await this.connectionManager.executeQuery(query, { cutoffTime });
-    const deleted = result.records[0]?.get('deleted') as number || 0;
+    const deleted = (result.records[0]?.get('deleted') as number) || 0;
 
     this.log(`Cleaned up ${deleted} old completed/failed jobs`);
     return deleted;
@@ -446,16 +512,17 @@ export class Neo4jJobStore {
   async scheduledCleanupJobs(retentionDays = 14): Promise<number> {
     // For backward compatibility, if a very large number is passed, assume it's milliseconds
     // Convert to days (any value > 100 is likely milliseconds)
-    const actualRetentionDays = retentionDays > 100
-      ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
-      : retentionDays;
+    const actualRetentionDays =
+      retentionDays > 100
+        ? Math.max(7, Math.min(30, Math.round(retentionDays / (24 * 60 * 60 * 1000))))
+        : retentionDays;
 
     // Validate retention days
     if (actualRetentionDays < 7 || actualRetentionDays > 30) {
       throw new Error(`Retention days must be between 7 and 30, got ${actualRetentionDays}`);
     }
 
-    const cutoffTime = Date.now() - (actualRetentionDays * 24 * 60 * 60 * 1000);
+    const cutoffTime = Date.now() - actualRetentionDays * 24 * 60 * 60 * 1000;
 
     this.log(`Running scheduled cleanup for jobs older than ${new Date(cutoffTime).toISOString()}`);
 
@@ -476,13 +543,14 @@ export class Neo4jJobStore {
 
     try {
       const result = await this.connectionManager.executeQuery(query, { cutoffTime });
-      const deleted = result.records[0]?.get('deleted') as number || 0;
+      const deleted = (result.records[0]?.get('deleted') as number) || 0;
 
       this.log(`Scheduled cleanup completed: ${deleted} jobs removed`);
       return deleted;
     } catch (error) {
       // Fallback to regular cleanup if APOC is not available
-      this.log('APOC not available, falling back to regular cleanup');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log(`APOC not available (${errorMessage}), falling back to regular cleanup`);
       return await this.cleanupJobs(retentionDays);
     }
   }

@@ -8,19 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.9.16] - 2025-11-14
 
 ### Added
+
 - Storage providers now expose `getEntitiesWithoutEmbeddings(limit)` so missing embeddings can be queried in bounded batches without loading the entire graph.
 
 ### Changed
+
 - `force_generate_embedding` now exposes a dual-mode workflow that uses `storageProvider.getEntity()` for specific re-embedding, discovers and queues missing-embedding entities via `getEntitiesWithoutEmbeddings(limit)` in batch mode, and returns mode-aware JSON feedback instead of looping over `openNodes([])`.
 - Tool metadata, README guidance, and the detailed project analysis now document the new batch repair workflow, the optional `limit` parameter, and recommended batch sizes for different graph volumes, giving operators an operational guide for repairing missing embeddings safely.
 
 ## [0.3.9.15] - 2025-11-13
 
 ### Added
+
 - `scripts/error-scenarios.ts` plus `npm run error-scenarios` to drive semantic fallback, strict-mode failure, and keyword-performance checks against the real OpenAI/Neo4j stack.
 - Integration tests now spin up a disposable Neo4j database whose name can be configured via `NEO4J_INTEGRATION_DATABASE` before being dropped, so running `npm run test:integration` never touches production data.
 
 ### Changed
+
 - Integration suites and `Neo4jIntegration.test.ts` read all Neo4j connection parameters (uri, bolt port, username, password, database name) from the environment, sanitize the database identifier to letters/numbers, and create/drop the dedicated integration database with scoped permissions.
 - Updated docs to describe the guarded integration workflow, health monitoring, and new script (README/docs/detailed-project-analysis.md).
 - The `Neo4jStorageProvider` now logs with `ErrorCategory` metadata everywhere, performs structured retries, and exposes the `runRecurringTask` helper for consistent backoff; job loops, semantic search diagnostics, and changelog entries reflect those observability improvements.
@@ -30,10 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.9.14] - 2025-11-13
 
 ### Added
+
 - Centralised error classification utilities (`ErrorCategory`, type guards for Axios/Neo4j/network errors, and dedicated unit tests) so every catch site can determine whether failures are transient, permanent, or critical before choosing recovery.
 - Introduced a `/health` endpoint driven by `Neo4jEmbeddingJobManager.getHealthStatus()` to expose consecutive failure counts, success rate, and error-pattern histograms for monitoring systems.
 
 ### Changed
+
 - `Neo4jEmbeddingJobManager` now heartbeats leased jobs, retries transient failures with exponential backoff, logs structured failure metadata (category, stack, rate limiter state), and annotates `:EmbedJob` nodes with error category/stack so operators can distinguish retriable vs. permanent failures.
 - Search results now include `searchType`, `fallbackReason`, and richer diagnostics (timings, embedding coverage, fallback chain) plus a strict mode that throws when semantic search is explicitly requested but unavailable.
 - The scheduled job and cleanup loops use the shared retry policy and surface health transitions so degraded workers log warnings before human intervention.
@@ -58,17 +64,20 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.13] - 2025-11-13
 
 ### Changed
+
 - Standardised Neo4j relation conversions so optional `strength`/`confidence` fields now preserve `null` values end-to-end, matching entity handling and Neo4j’s JSON semantics.
 - Updated the `Relation` interface and validators to accept `null` as the canonical “unset” value for optional numeric fields and expanded the unit tests accordingly.
 
 ## [0.3.9.12] - 2025-11-13
 
 ### Changed
+
 - Extracted `debug_embedding_config` diagnostics into `src/diagnostics/debugEmbeddingConfig.ts`, reducing `callToolHandler.ts` by ~150 lines and isolating troubleshooting logic from tool dispatching.
 
 ## [0.3.9.11] - 2025-11-13
 
 ### Changed
+
 - **TypeScript Type Safety Improvements:** Eliminated unsafe `any` type usage for `knowledgeGraphManager` parameter across the MCP server layer
   - Replaced `any` with proper `KnowledgeGraphManager` type in `setup.ts`, `callToolHandler.ts`, and all 5 tool handler files
   - Added type imports and type assertions for function parameters (e.g., `args.entities as Entity[]`, `args.relations as Relation[]`)
@@ -80,6 +89,7 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.10] - 2025-11-13
 
 ### Changed
+
 - **Code Refactoring:** Eliminated code duplication in vector search logic between `semanticSearch` and `findSimilarEntities`
   - `semanticSearch` now delegates the core vector search operations to `findSimilarEntities` instead of duplicating the query logic
   - Removed ~120 lines of duplicate vector search code (lines 2089-2209) from `semanticSearch`
@@ -91,6 +101,7 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.9] - 2025-11-13
 
 ### Fixed
+
 - **Entity Embedding Retrieval:** Fixed `nodeToEntity` method to properly include embedding data when converting Neo4j nodes to Entity objects
   - Embeddings are now correctly returned by `loadGraph()`, `searchNodes()`, `openNodes()`, `getEntity()`, `getEntityHistory()`, and `findSimilarEntities()`
   - When an entity has an embedding stored in Neo4j, it's now properly converted to the `EntityEmbedding` format with `vector`, `model`, and `lastUpdated` fields
@@ -101,19 +112,23 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.8] - 2025-11-12
 
 ### Changed
+
 - `KnowledgeGraphManager.createEntities` now delegates deduplication entirely to the storage provider, avoiding `loadGraph()` and in-memory entity maps.
 - `Neo4jStorageProvider.createEntities` implements an indexed upsert workflow with temporal versioning merges, emitting debug logs for create/merge/skip paths.
 
 ### Performance
+
 - Resolved the O(n) memory spike during entity creation by moving deduplication to Neo4j; memory usage remains constant regardless of existing graph size.
 - Added `scripts/benchmark-create-entities.ts` to measure end-to-end performance. On a local Neo4j instance, two sequential batches of 10,000 entities completed in **5.41s** and **4.55s** respectively with RSS deltas of **+126 MB** and **-29 MB**, confirming flat memory utilisation across batches.
 
 ### Fixed
+
 - Covered the new upsert semantics with unit tests in `Neo4jTemporalIntegrity.test.ts`, ensuring new entity, merge, and idempotent scenarios all respect `_createNewEntityVersion` contracts.
 
 ## [0.3.9.7] - 2025-11-12
 
 ### Fixed
+
 - **Critical:** Fixed embedding generation failure after entity versioning
   - `Neo4jVectorStore.addVector` now includes `validTo: NULL` filter to match only current entity versions
   - `Neo4jVectorStore.removeVector` now includes `validTo: NULL` filter for consistency
@@ -125,6 +140,7 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.6] - 2025-11-12
 
 ### Performance
+
 - **Critical Performance Improvement:** Decoupled embedding generation from database transactions in entity creation
   - Entity creation time reduced by **200x** (from ~2-5 seconds per entity to ~10ms)
   - Database transaction duration reduced from O(n × 2s) to O(n × 10ms) where n = number of entities
@@ -136,11 +152,13 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.5] - 2025-11-12
 
 ### Fixed
+
 - Eliminated the N+1 lookup pattern in `Neo4jStorageProvider` by batching `findSimilarEntities` and `semanticSearch` entity fetches; both paths now run with two queries regardless of result count, delivering ~10-100× faster response times without changing any public API.
 
 ## [0.3.9.4] - 2025-11-12
 
 ### Fixed
+
 - **Critical:** Fixed temporal relationship integrity issues in Neo4j storage provider
   - `deleteObservations` now preserves all relationships through entity versioning
   - All relationship creation operations validate entity temporal state (`validTo IS NULL`)
@@ -152,25 +170,30 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.3] - 2025-11-11
 
 ### Added
+
 - Automatic provisioning for the dedicated `embedding-jobs` Neo4j database, including creation of the queue constraints/indexes when the configured user has admin rights.
 - Startup validation now blocks until the job database exists and is online, preventing workers from running without the required datastore.
 - Unit coverage for the new job database initializer to ensure the creation/wait logic keeps working.
 
 ### Changed
+
 - `DEFAULT_NEO4J_CONFIG` now honors `NEO4J_URI` for the primary and job databases, so custom Bolt ports are respected everywhere (CLI, workers, and bootstrapper).
 - README/environment samples (including the Claude Desktop MCP snippet) explicitly require `EMBED_JOB_RETENTION_DAYS`, matching the fail-fast runtime validation.
 - OpenSpec change `update-embedding-log-storage` has been archived and merged into the canonical `embedding-jobs` spec.
 
 ### Fixed
+
 - Workers no longer fail on first boot when the job database is missing; the bootstrapper creates it via the `system` database and waits until it reaches `ONLINE`.
 
 ## [0.3.9.2] - 2025-11-11
 
 ### Added
+
 - Neo4j-backed embedding job queue is now documented in the README, including Cypher snippets to inspect, clean up, or purge `:EmbedJob` nodes.
 - OpenSpec change `refactor-embedding-job-manager` archived after successful validation.
 
 ### Changed
+
 - Embedding jobs now store per-entity version IDs, so each entity version automatically receives a fresh embedding.
 - Queue Cypher queries force integer parameters (`toInteger(...)`) to avoid `10.0` vs `10` issues when leasing jobs.
 - Default job creation initializes all diagnostic fields (`lock_owner`, `lock_until`, `error`, `processed_at`) so Cypher queries can safely access them.
@@ -178,6 +201,7 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 - Knowledge graph `Entity` interface now exposes the optional `version` field returned by Neo4j.
 
 ### Fixed
+
 - Background worker no longer crashes when leasing jobs in environments that serialize numbers as floats.
 - Jobs scheduled after observation updates now actually enqueue (the previous logic hard-coded version `1` and skipped new versions).
 - Documentation explains how to monitor and clean the job queue, preventing confusion about “stuck” `:EmbedJob` nodes.
@@ -185,17 +209,20 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 ## [0.3.9.1] - 2025-11-11
 
 ### Added
+
 - Introduced `env.example` with the minimal OpenAI and Neo4j variables so local setups and CI share the same defaults.
 - Documented the current architecture and configuration expectations in `docs/detailed-project-analysis.md`.
 - Enabled the full Vitest suite by reworking the previously skipped Neo4j integration specs so they now run with environment-driven configuration.
 - Updated `README.md` with fork context and a guided environment-setup workflow based on the new `.env` file.
 
 ### Changed
+
 - Neo4j configuration now derives the Bolt port, username, and password from the environment everywhere (`src/config/storage.ts`, `src/storage/neo4j/Neo4jConfig.ts`, and all related tests), eliminating hard-coded credentials.
 - Vitest loads `.env` automatically (`vitest.config.ts`), ensuring unit and integration tests respect the same connection settings as the application.
 - Updated `docker-compose.yml` to forward `NEO4J_*` values for auth and port mappings so containers run with the same credentials and ports used by the tests and CLI utilities.
 
 ### Removed
+
 - Dropped the outdated `example.env` in favor of the new `env.example` template.
 
 ## [0.3.9] - 2025-05-08

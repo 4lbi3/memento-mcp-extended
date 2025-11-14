@@ -119,7 +119,11 @@ export interface KnowledgeGraphSearchOptions {
 }
 
 class SemanticSearchFallbackError extends Error {
-  constructor(public reason: FallbackReason, message?: string, public originalError?: unknown) {
+  constructor(
+    public reason: FallbackReason,
+    message?: string,
+    public originalError?: unknown
+  ) {
     super(message ?? reason);
     this.name = 'SemanticSearchFallbackError';
   }
@@ -909,7 +913,10 @@ export class KnowledgeGraphManager {
     return diagnostics;
   }
 
-  private async computeEntityStats(): Promise<{ totalEntities: number; entitiesWithEmbeddings: number }> {
+  private async computeEntityStats(): Promise<{
+    totalEntities: number;
+    entitiesWithEmbeddings: number;
+  }> {
     const cacheDuration = 60 * 1000;
     const now = Date.now();
 
@@ -936,10 +943,7 @@ export class KnowledgeGraphManager {
     return { totalEntities, entitiesWithEmbeddings };
   }
 
-  async search(
-    query: string,
-    options: KnowledgeGraphSearchOptions = {}
-  ): Promise<KnowledgeGraph> {
+  async search(query: string, options: KnowledgeGraphSearchOptions = {}): Promise<KnowledgeGraph> {
     const normalizedOptions: KnowledgeGraphSearchOptions = { ...options };
 
     if (normalizedOptions.hybridSearch) {
@@ -949,8 +953,8 @@ export class KnowledgeGraphManager {
     const requestedSearchType: SearchType = normalizedOptions.hybridSearch
       ? 'hybrid'
       : normalizedOptions.semanticSearch
-      ? 'semantic'
-      : 'keyword';
+        ? 'semantic'
+        : 'keyword';
     const includeDiagnostics = normalizedOptions.includeDiagnostics ?? true;
     const strictMode = normalizedOptions.strictMode ?? false;
     const startTime = Date.now();
@@ -1004,8 +1008,7 @@ export class KnowledgeGraphManager {
           const semanticGraph = await this.semanticSearch(query, {
             hybridSearch: normalizedOptions.hybridSearch || false,
             limit: normalizedOptions.limit || 10,
-            threshold:
-              normalizedOptions.threshold ?? normalizedOptions.minSimilarity ?? 0.5,
+            threshold: normalizedOptions.threshold ?? normalizedOptions.minSimilarity ?? 0.5,
             entityTypes: normalizedOptions.entityTypes || [],
             facets: normalizedOptions.facets || [],
             offset: normalizedOptions.offset || 0,

@@ -11,6 +11,7 @@ This specification defines how entities are created, updated, and managed within
 The system SHALL provide the ability to create new entities in the knowledge graph with specified name, type, and observations.
 
 #### Scenario: Create single entity
+
 - **GIVEN** valid entity data with name, entityType, and observations
 - **WHEN** the entity creation operation is invoked
 - **THEN** a new entity SHALL be persisted to the storage provider
@@ -18,6 +19,7 @@ The system SHALL provide the ability to create new entities in the knowledge gra
 - **AND** the entity SHALL be returned to the caller
 
 #### Scenario: Create multiple entities in batch
+
 - **GIVEN** an array of valid entity data
 - **WHEN** the batch entity creation operation is invoked
 - **THEN** all entities SHALL be persisted atomically
@@ -29,6 +31,7 @@ The system SHALL provide the ability to create new entities in the knowledge gra
 The system SHALL ensure that entity names are unique within the current version of the knowledge graph, preventing duplicate entities from being created.
 
 #### Scenario: Attempt to create duplicate entity
+
 - **GIVEN** an entity with name "Alice" already exists
 - **WHEN** an attempt is made to create another entity with name "Alice"
 - **THEN** no new entity SHALL be created
@@ -39,12 +42,14 @@ The system SHALL ensure that entity names are unique within the current version 
 The system SHALL provide the ability to retrieve entities by name or query pattern.
 
 #### Scenario: Retrieve entity by exact name
+
 - **GIVEN** an entity with name "Alice" exists
 - **WHEN** a retrieval operation is invoked with name "Alice"
 - **THEN** the entity data SHALL be returned
 - **AND** the entity SHALL include all observations and metadata
 
 #### Scenario: Retrieve non-existent entity
+
 - **GIVEN** no entity with name "Bob" exists
 - **WHEN** a retrieval operation is invoked with name "Bob"
 - **THEN** a null or empty result SHALL be returned
@@ -55,6 +60,7 @@ The system SHALL provide the ability to retrieve entities by name or query patte
 The storage provider SHALL perform entity deduplication at the database level using atomic operations, eliminating the need for the application layer to load existing entities into memory.
 
 #### Scenario: Create duplicate entity with new observations
+
 - **GIVEN** an entity with name "Alice" and observations ["fact1", "fact2"] exists in the database
 - **WHEN** `createEntities([{name: "Alice", entityType: "person", observations: ["fact2", "fact3"]}])` is called
 - **THEN** the storage provider SHALL query for the existing entity using an indexed lookup
@@ -64,6 +70,7 @@ The storage provider SHALL perform entity deduplication at the database level us
 - **AND** the operation SHALL complete without loading the entire graph into memory
 
 #### Scenario: Create duplicate entity with no new observations
+
 - **GIVEN** an entity with name "Bob" and observations ["fact1", "fact2"] exists
 - **WHEN** `createEntities([{name: "Bob", entityType: "person", observations: ["fact1"]}])` is called
 - **THEN** the storage provider SHALL query for the existing entity
@@ -72,6 +79,7 @@ The storage provider SHALL perform entity deduplication at the database level us
 - **AND** the operation SHALL return successfully
 
 #### Scenario: Create new entity
+
 - **GIVEN** no entity with name "Charlie" exists in the database
 - **WHEN** `createEntities([{name: "Charlie", entityType: "person", observations: ["fact1"]}])` is called
 - **THEN** the storage provider SHALL query for the entity and find it doesn't exist
@@ -80,6 +88,7 @@ The storage provider SHALL perform entity deduplication at the database level us
 - **AND** the operation SHALL complete without loading the entire graph into memory
 
 #### Scenario: Scalability with large graphs
+
 - **GIVEN** a knowledge graph contains 100,000+ entities
 - **WHEN** `createEntities([{name: "NewEntity", ...}])` is called
 - **THEN** the operation SHALL complete in constant time O(1) regardless of graph size
@@ -91,6 +100,7 @@ The storage provider SHALL perform entity deduplication at the database level us
 The `KnowledgeGraphManager` SHALL delegate all entity deduplication logic to the storage provider, removing any in-memory graph loading for deduplication purposes.
 
 #### Scenario: Manager delegates to storage provider
+
 - **GIVEN** a storage provider is configured
 - **WHEN** `KnowledgeGraphManager.createEntities()` is called
 - **THEN** the manager SHALL NOT call `loadGraph()` for deduplication
@@ -98,6 +108,7 @@ The `KnowledgeGraphManager` SHALL delegate all entity deduplication logic to the
 - **AND** deduplication SHALL be handled entirely by the storage provider
 
 #### Scenario: Embedding job scheduling after entity creation
+
 - **GIVEN** an embedding job manager is configured
 - **WHEN** entities are successfully created via the storage provider
 - **THEN** the manager SHALL schedule embedding jobs for the newly created entities
@@ -108,6 +119,7 @@ The `KnowledgeGraphManager` SHALL delegate all entity deduplication logic to the
 The Neo4j storage provider SHALL implement an intelligent upsert pattern that checks for existing entities, creates new ones when they don't exist, and merges observations into existing entities through temporal versioning.
 
 #### Scenario: Upsert query pattern for each entity
+
 - **GIVEN** the Neo4j storage provider is active
 - **WHEN** `createEntities([entity])` is called
 - **THEN** the provider SHALL execute a query to check if entity exists: `MATCH (e:Entity {name: $name, validTo: NULL}) RETURN e`
@@ -116,6 +128,7 @@ The Neo4j storage provider SHALL implement an intelligent upsert pattern that ch
 - **AND** all operations SHALL occur within a single transaction
 
 #### Scenario: Batch entity creation with upsert
+
 - **GIVEN** multiple entities are provided for creation
 - **WHEN** `createEntities([entity1, entity2, entity3])` is called
 - **THEN** each entity SHALL be processed with the upsert pattern (check existence, then create or merge)
@@ -124,6 +137,7 @@ The Neo4j storage provider SHALL implement an intelligent upsert pattern that ch
 - **AND** the transaction SHALL commit only after all entities are processed
 
 #### Scenario: Temporal versioning preservation with archived versions
+
 - **GIVEN** an entity "Alice" with version 1 and `validTo = 1234567890` exists (archived)
 - **AND** an entity "Alice" with version 2 and `validTo IS NULL` exists (current)
 - **WHEN** `createEntities([{name: "Alice", observations: ["new fact"]}])` is called

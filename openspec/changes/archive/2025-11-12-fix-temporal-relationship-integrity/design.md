@@ -3,6 +3,7 @@
 ## Architecture Overview
 
 The Neo4j storage provider implements a **bitemporal versioning system** where:
+
 - Entities have `validFrom` and `validTo` timestamps to track their temporal validity
 - Current entities have `validTo = null`
 - Archived entities have `validTo = timestamp`
@@ -13,6 +14,7 @@ The Neo4j storage provider implements a **bitemporal versioning system** where:
 #### Problem 1: Relationship Orphaning in `deleteObservations`
 
 **Current Flow:**
+
 ```
 1. MATCH entity WHERE validTo IS NULL
 2. SET entity.validTo = now
@@ -21,6 +23,7 @@ The Neo4j storage provider implements a **bitemporal versioning system** where:
 ```
 
 **Corrected Flow:**
+
 ```
 1. MATCH entity WHERE validTo IS NULL
 2. MATCH all incoming/outgoing relationships
@@ -33,14 +36,17 @@ The Neo4j storage provider implements a **bitemporal versioning system** where:
 #### Problem 2: Non-Temporal Relationship Creation
 
 **Current Flow:**
+
 ```cypher
 MATCH (from:Entity {name: $fromName})
 MATCH (to:Entity {name: $toName})
 CREATE relationship
 ```
+
 This can match ANY version of the entities!
 
 **Corrected Flow:**
+
 ```cypher
 MATCH (from:Entity {name: $fromName})
 WHERE from.validTo IS NULL
@@ -54,12 +60,14 @@ CREATE relationship
 ### Phase 0: Refactor - Extract Common Versioning Logic (DRY)
 
 **Problem:** Both `addObservations` and `deleteObservations` need identical complex versioning logic (~100 lines):
+
 1. Retrieve entity and all relationships (incoming + outgoing)
 2. Invalidate old entity and relationships
 3. Create new entity version
 4. Recreate all relationships
 
 **Current State:** This logic only exists in `addObservations`, leading to:
+
 - Code duplication if copied to `deleteObservations`
 - Maintenance burden (fix bugs in two places)
 - Risk of logic divergence over time
@@ -67,6 +75,7 @@ CREATE relationship
 **Solution:** Extract into shared private method `_createNewEntityVersion()`
 
 **New Method Signature:**
+
 ```typescript
 /**
  * Creates a new version of an entity with updated properties while maintaining
@@ -160,6 +169,7 @@ private async _createNewEntityVersion(
 ```
 
 **Benefits:**
+
 - ✅ Single source of truth for versioning logic
 - ✅ Eliminates ~100 lines of duplicated code
 - ✅ Impossible for `addObservations` and `deleteObservations` to diverge
@@ -167,6 +177,7 @@ private async _createNewEntityVersion(
 - ✅ Easier to test (test one method, not two)
 
 **Usage in `addObservations`:**
+
 ```typescript
 async addObservations(observations: {...}[]): Promise<...> {
   // ... validation ...
@@ -185,6 +196,7 @@ async addObservations(observations: {...}[]): Promise<...> {
 ```
 
 **Usage in `deleteObservations`:**
+
 ```typescript
 async deleteObservations(deletions: {...}[]): Promise<void> {
   // ... validation ...
@@ -204,6 +216,7 @@ async deleteObservations(deletions: {...}[]): Promise<void> {
 ### Phase 1: Implement Refactored Versioning Methods
 
 **Current Code Structure (lines 1121-1230):**
+
 ```typescript
 // Get entity only
 const getQuery = `MATCH (e:Entity {name: $name}) WHERE e.validTo IS NULL RETURN e`;
@@ -215,6 +228,7 @@ const invalidateQuery = `MATCH (e:Entity {id: $id}) SET e.validTo = $now`;
 ```
 
 **New Code Structure:**
+
 ```typescript
 // Get entity AND relationships (like addObservations does)
 const getQuery = `
@@ -256,6 +270,7 @@ for (const inRel of incomingRels) {
 **Files to Modify:**
 
 1. **`createRelations()` (line 756-760)**
+
 ```typescript
 // OLD
 const checkQuery = `
@@ -275,6 +290,7 @@ const checkQuery = `
 ```
 
 2. **`createRelations()` (line 794-810)**
+
 ```typescript
 // OLD
 const createQuery = `
@@ -294,6 +310,7 @@ const createQuery = `
 ```
 
 3. **`addObservations()` relationship recreation (lines 976-992, 1015-1031)**
+
 ```typescript
 // OLD - uses stale entity IDs
 const createOutRelQuery = `
@@ -313,25 +330,33 @@ const createOutRelQuery = `
 ```
 
 4. **`saveGraph()` (line 415-416)**
+
 ```typescript
 // OLD
-await txc.run(`
+await txc.run(
+  `
   MATCH (from:Entity {name: $fromName})
   MATCH (to:Entity {name: $toName})
   CREATE (from)-[r:RELATES_TO {...}]->(to)
-`, params);
+`,
+  params
+);
 
 // NEW
-await txc.run(`
+await txc.run(
+  `
   MATCH (from:Entity {name: $fromName})
   WHERE from.validTo IS NULL
   MATCH (to:Entity {name: $toName})
   WHERE to.validTo IS NULL
   CREATE (from)-[r:RELATES_TO {...}]->(to)
-`, params);
+`,
+  params
+);
 ```
 
 5. **`updateRelation()` (lines 1409-1424)**
+
 ```typescript
 // OLD
 const createQuery = `
@@ -355,11 +380,13 @@ const createQuery = `
 **Test Coverage Required:**
 
 1. **Temporal Integrity Tests:**
+
    - Entity versioning preserves all relationships
    - Multiple consecutive updates maintain integrity
    - Bidirectional relationship recreation works correctly
 
 2. **Relationship Validation Tests:**
+
    - Cannot create relationships to archived entities
    - Relationship creation after entity update uses current version
    - Point-in-time queries return consistent graph
@@ -373,18 +400,22 @@ const createQuery = `
 ## Trade-offs and Considerations
 
 ### Performance Impact
+
 - **Additional WHERE clauses**: Minimal overhead, likely optimized by Neo4j query planner
 - **Relationship retrieval in deleteObservations**: Same overhead as addObservations (already accepted)
 - **More relationship creation queries**: Necessary for correctness, cannot be optimized away
 
 ### Backward Compatibility
+
 - ✅ No API contract changes (method signatures unchanged)
 - ✅ Existing valid graphs remain valid
 - ✅ Only affects future operations, not historical data
 - ⚠️ **May reveal existing phantom relationships** - consider cleanup migration
 
 ### Data Migration
+
 Not strictly required, but recommended:
+
 ```cypher
 // Find and delete phantom relationships pointing to archived entities
 MATCH (from:Entity)-[r:RELATES_TO]->(to:Entity)
@@ -396,12 +427,14 @@ DELETE r
 ## Validation Strategy
 
 ### Pre-deployment Validation
+
 1. Run full test suite with new temporal integrity tests
 2. Test on copy of production database
 3. Verify relationship counts before/after fix
 4. Run cleanup migration to remove existing phantom relationships
 
 ### Post-deployment Monitoring
+
 ```cypher
 // Monitor for phantom relationships (should be 0)
 MATCH (from:Entity)-[r:RELATES_TO]->(to:Entity)
@@ -420,17 +453,22 @@ RETURN current_entities, count(r) as current_relationships,
 ## Risk Mitigation
 
 ### High-Risk Areas
+
 1. **Relationship Recreation Logic**: Critical for data integrity
+
    - **Mitigation**: Extensive test coverage, transaction rollback on error
 
 2. **Query Performance**: Additional WHERE clauses could slow queries
+
    - **Mitigation**: Verify indexes on `validTo` exist, benchmark before/after
 
 3. **Concurrent Updates**: Multiple updates to same entity
    - **Mitigation**: Existing transaction isolation should handle, add test
 
 ### Rollback Plan
+
 If issues discovered post-deployment:
+
 1. Revert to previous code version
 2. Phantom relationships created during buggy period can be cleaned with migration query
 3. No data loss (only creation of invalid relationships)

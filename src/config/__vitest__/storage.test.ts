@@ -158,7 +158,6 @@ describe('storage configuration module', () => {
         },
       });
     });
-
   });
 
   describe('initializeStorageProvider', () => {

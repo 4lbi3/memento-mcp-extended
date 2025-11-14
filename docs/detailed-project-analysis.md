@@ -11,6 +11,7 @@ Memento MCP is a sophisticated knowledge graph memory system designed for Large 
 The main entry point serves as the central orchestrator for the entire system:
 
 #### Key Responsibilities:
+
 1. **Storage Provider Initialization**: Creates and configures the Neo4j storage provider using environment-based configuration
 2. **Embedding Service Setup**: Initializes OpenAI-based embedding generation with rate limiting and caching
 3. **Knowledge Graph Manager Creation**: Instantiates the core `KnowledgeGraphManager` with all necessary dependencies
@@ -18,20 +19,28 @@ The main entry point serves as the central orchestrator for the entire system:
 5. **Background Processing**: Sets up periodic embedding job processing (every 10 seconds)
 
 #### Critical Configuration Logic:
+
 ```typescript
 // Environment variable validation for OpenAI API key
 if (!process.env.OPENAI_API_KEY) {
-  logger.warn('OPENAI_API_KEY environment variable is not set. Semantic search will use random embeddings.');
+  logger.warn(
+    'OPENAI_API_KEY environment variable is not set. Semantic search will use random embeddings.'
+  );
 }
 
 // Rate limiting configuration for embedding API calls
 const rateLimiterOptions = {
-  tokensPerInterval: process.env.EMBEDDING_RATE_LIMIT_TOKENS ? parseInt(process.env.EMBEDDING_RATE_LIMIT_TOKENS, 10) : 20,
-  interval: process.env.EMBEDDING_RATE_LIMIT_INTERVAL ? parseInt(process.env.EMBEDDING_RATE_LIMIT_INTERVAL, 10) : 60 * 1000,
+  tokensPerInterval: process.env.EMBEDDING_RATE_LIMIT_TOKENS
+    ? parseInt(process.env.EMBEDDING_RATE_LIMIT_TOKENS, 10)
+    : 20,
+  interval: process.env.EMBEDDING_RATE_LIMIT_INTERVAL
+    ? parseInt(process.env.EMBEDDING_RATE_LIMIT_INTERVAL, 10)
+    : 60 * 1000,
 };
 ```
 
 #### Adapter Pattern Implementation:
+
 The system uses an adapter pattern to bridge different storage provider interfaces:
 
 ```typescript
@@ -47,7 +56,7 @@ const adaptedStorageProvider = {
     };
     // Delegate to Neo4j storage provider
     return await storageProvider.updateEntityEmbedding(name, formattedEmbedding);
-  }
+  },
 };
 ```
 
@@ -58,6 +67,7 @@ This is the core business logic component that orchestrates all knowledge graph 
 #### Key Components:
 
 **1. Storage Provider Abstraction:**
+
 ```typescript
 interface KnowledgeGraphManagerOptions {
   storageProvider?: StorageProvider;
@@ -68,37 +78,44 @@ interface KnowledgeGraphManagerOptions {
 ```
 
 **2. Entity Management:**
+
 - **createEntities()**: Handles batch entity creation with deduplication and embedding scheduling
 - **deleteEntities()**: Removes entities and associated relations with vector store cleanup
 - **addObservations()**: Appends observations to existing entities with automatic re-embedding
 
 **3. Relation Management:**
+
 - **createRelations()**: Creates directed relationships between entities with validation
 - **updateRelation()**: Modifies existing relations with temporal versioning
 - **deleteRelations()**: Removes relations from the graph
 
 **4. Search Operations:**
+
 - **searchNodes()**: Basic text-based entity and relation search
 - **openNodes()**: Retrieves specific entities by name with related relations
 - **search()**: Advanced search with semantic, hybrid, and keyword options
 
 **4.1 Search Observability Enhancements:**
+
 - Search results now include a `searchType` flag (`semantic`, `hybrid`, or `keyword`) plus an optional `fallbackReason` that describes why semantic/hybrid search was replaced.
 - The new `searchDiagnostics` payload bundles `requestedSearchType`, `actualSearchType`, embedding coverage stats, vector/query timings, and the fallback chain so clients can signal degraded modes to downstream systems.
 - `strictMode` allows callers to enforce semantic-only results by throwing whenever `searchType` falls back to `keyword`, enabling transparent migration for clients that can’t tolerate silent degradation.
 
 **4.2 Migration Guidance for Search Consumers:**
+
 - Treat `fallbackReason` as a signal for instrumentation or user-facing messaging. For example, log or surface `embedding_service_not_configured` / `vector_store_unavailable` before showing keyword matches.
 - Use `searchType` and `searchDiagnostics` to decide whether to retry with different settings, or to escalate incidents when `actualSearchType !== requestedSearchType`.
 - Remember to guard `searchType === 'keyword'` before assuming full semantic quality; the diagnostics payload contains timing and coverage — don’t ignore it.
 
 **5. Temporal Features:**
+
 - **getEntityHistory()**: Retrieves complete version history for entities
 - **getRelationHistory()**: Retrieves complete version history for relations
 - **getGraphAtTime()**: Point-in-time graph state retrieval
 - **getDecayedGraph()**: Confidence-decayed graph based on temporal decay algorithms
 
 #### Vector Store Integration:
+
 ```typescript
 private async initializeVectorStore(options: VectorStoreFactoryOptions): Promise<void> {
   try {
@@ -140,6 +157,7 @@ private async ensureVectorStore(): Promise<VectorStore> {
 #### Neo4j Storage Provider (`src/storage/neo4j/Neo4jStorageProvider.ts`)
 
 **Core Responsibilities:**
+
 1. **Connection Management**: Handles Neo4j driver connections and transactions
 2. **Schema Management**: Creates and maintains database constraints and indexes
 3. **CRUD Operations**: Implements all basic entity and relation operations
@@ -147,13 +165,14 @@ private async ensureVectorStore(): Promise<VectorStore> {
 5. **Temporal Operations**: Handles version history and time-based queries
 
 **Key Configuration:**
+
 ```typescript
 interface Neo4jStorageProviderOptions {
   config?: Partial<Neo4jConfig>;
   connectionManager?: Neo4jConnectionManager;
   decayConfig?: {
     enabled: boolean;
-    halfLifeDays?: number;  // Default: 30 days
+    halfLifeDays?: number; // Default: 30 days
     minConfidence?: number; // Default: 0.1
   };
 }
@@ -168,6 +187,7 @@ interface Neo4jStorageProviderOptions {
 #### Schema Management (`src/storage/neo4j/Neo4jSchemaManager.ts`)
 
 **Database Structure:**
+
 ```cypher
 // Entity nodes with temporal metadata
 CREATE CONSTRAINT entity_name IF NOT EXISTS
@@ -193,6 +213,7 @@ OPTIONS {
 - Environment variables like `HEALTH_PORT` and `EMBED_JOB_MAX_RETRIES` let deployers tune monitoring and retry budgets; the health endpoint is ideal for synthetic checks or Prometheus scraping, and the enhanced logs make triaging faster when the fallbackReason or health state changes.
 
 **Index Management:**
+
 - **Uniqueness Constraints**: Ensures entity name uniqueness with temporal validity
 - **Vector Indexes**: Optimized for high-dimensional vector similarity search
 - **Composite Indexes**: Performance optimization for common query patterns
@@ -202,6 +223,7 @@ OPTIONS {
 #### OpenAI Embedding Service (`src/embeddings/OpenAIEmbeddingService.ts`)
 
 **API Integration:**
+
 ```typescript
 interface OpenAIEmbeddingResponse {
   data: Array<{
@@ -219,12 +241,14 @@ interface OpenAIEmbeddingResponse {
 ```
 
 **Key Features:**
+
 1. **Batch Processing**: Handles multiple texts in single API calls
 2. **Rate Limiting**: Prevents API quota exhaustion
 3. **Error Handling**: Comprehensive error handling for API failures
 4. **Vector Normalization**: Ensures consistent embedding quality
 
 **Rate Limiting Implementation:**
+
 ```typescript
 // Token bucket algorithm for API call management
 private tokens: number;
@@ -238,6 +262,7 @@ private interval: number;
 `Neo4jEmbeddingJobManager` is the single embedding-loop implementation that pairs an OpenAI-backed `EmbeddingService` with a Neo4j-based job queue. It delegates queue persistence and locking to `Neo4jJobStore`, which keeps every pending/processing job as an `EmbedJob` node in the job database.
 
 **EmbedJob lattice (excerpt from `Neo4jJobStore.enqueueJob`)**:
+
 ```cypher
 MERGE (job:EmbedJob {
   entity_uid: $entity_uid,
@@ -268,6 +293,7 @@ RETURN job.id, job.status
 The job store also exposes leasing (`leaseJobs`), heartbeat extensions, success/failure transitions, retrying of permanently failed jobs, queue statistics, and cleanup helpers that either delete old jobs via direct Cypher or fall back to `apoc.periodic.iterate`.
 
 **Processing logic**:
+
 - `scheduleEntityEmbedding()` validates that the target entity exists, fetches the active model from `EmbeddingServiceFactory`, and enqueues a job with the configured priority/`max_attempts`. Duplicate jobs are prevented by the entity+model+version MERGE key, and repeated failures cycle the job back to `pending`.
 - `processJobs()` is invoked every 10 s via `runRecurringTask` (see `src/index.ts`), leases up to `batchSize` jobs, and enforces the token-bucket rate limiter (default 60 tokens / minute). Each job text is derived by `_prepareEntityText()`, optionally deduplicated by `_getCachedEmbeddingOrGenerate()`, and then written back through `storageProvider.storeEntityVector`.
 - Failures are classified with `classifyError` to populate `ErrorCategory` metadata, spilled to `Neo4jJobStore.failJob`, and recorded in the manager’s health rollups. Successes call `jobStore.completeJob`, clear failure streaks, and update the LRU cache.
@@ -275,6 +301,7 @@ The job store also exposes leasing (`leaseJobs`), heartbeat extensions, success/
 - Cleanups (`cleanupJobs()`) call `jobStore.scheduledCleanupJobs(retentionDays)`, honoring `neo4jConfig.embedJobRetentionDays` (defaults to 14). There is also a `retryFailedJobs()` helper that reopens permanently failed jobs when operators want another pass.
 
 **Health & observability**:
+
 - `getHealthStatus()` returns `HEALTHY | DEGRADED | CRITICAL` plus nearest metrics; `startHealthServer()` (from `src/server/health.ts`) exposes these details at `/health` for external monitors.
 - Both the job processor and cleanup loop are wired into `runRecurringTask('embedding job processing', ...)` / `runRecurringTask('embedding job cleanup', ...)` with `JOB_RETRY_POLICY` derived from `EMBED_JOB_RETRY_*` env vars, so transient failures back off while critical errors halt the loop.
 - The health metrics are surfaced alongside the `ErrorCategory` metadata (stored in Neo4j via `failJob`) so the `/health` endpoint, logs, and diagnostics tools all see the same classification.
@@ -284,23 +311,28 @@ The job store also exposes leasing (`leaseJobs`), heartbeat extensions, success/
 #### Server Setup (`src/server/setup.ts`)
 
 **MCP Server Configuration:**
+
 ```typescript
-const server = new Server({
-  name: 'memento-mcp',
-  version: '1.0.0',
-  description: 'Memento MCP: Your persistent knowledge graph memory system',
-  publisher: '4lbi3',
-}, {
-  capabilities: {
-    tools: {},
-    serverInfo: {},
-    notifications: {},
-    logging: {},
+const server = new Server(
+  {
+    name: 'memento-mcp',
+    version: '1.0.0',
+    description: 'Memento MCP: Your persistent knowledge graph memory system',
+    publisher: '4lbi3',
+  },
+  {
+    capabilities: {
+      tools: {},
+      serverInfo: {},
+      notifications: {},
+      logging: {},
+    },
   }
-});
+);
 ```
 
 #### Tool Registration:
+
 ```typescript
 server.setRequestHandler(ListToolsRequestSchema, handleListToolsRequest);
 server.setRequestHandler(CallToolRequestSchema, handleCallToolRequest);
@@ -309,33 +341,39 @@ server.setRequestHandler(CallToolRequestSchema, handleCallToolRequest);
 #### Available MCP Tools
 
 **Entity Management:**
+
 - `create_entities`: Batch entity creation with observations
 - `add_observations`: Append observations to existing entities
 - `delete_entities`: Remove entities and associated relations
 - `delete_observations`: Remove specific observations from entities
 
 **Relation Management:**
+
 - `create_relations`: Create directed relationships with metadata
 - `get_relation`: Retrieve specific relation details
 - `update_relation`: Modify existing relations
 - `delete_relations`: Remove relations from graph
 
 **Graph Operations:**
+
 - `read_graph`: Retrieve entire knowledge graph
 - `search_nodes`: Basic text-based search
 - `open_nodes`: Retrieve specific entities by name
 
 **Semantic Search:**
+
 - `semantic_search`: Vector-based similarity search with configurable parameters
 - `get_entity_embedding`: Retrieve embedding vectors for entities
 
 **Temporal Features:**
+
 - `get_entity_history`: Complete entity version history
 - `get_relation_history`: Complete relation version history
 - `get_graph_at_time`: Point-in-time graph snapshots
 - `get_decayed_graph`: Confidence-decayed graph view
 
 **Debug Tools (when DEBUG=true):**
+
 - `force_generate_embedding`: Regenerate a single entity's embedding (`entity_name`) or omit it to run bounded batch repairs via `storageProvider.getEntitiesWithoutEmbeddings(limit)` (default `limit` 10).
 - `debug_embedding_config`: Diagnostic information
 - `diagnose_vector_search`: Vector index diagnostics
@@ -343,33 +381,35 @@ server.setRequestHandler(CallToolRequestSchema, handleCallToolRequest);
 ### Data Model Architecture
 
 #### Entity Structure
+
 ```typescript
 interface Entity {
-  name: string;           // Unique identifier
-  entityType: string;     // Classification (person, organization, event, etc.)
+  name: string; // Unique identifier
+  entityType: string; // Classification (person, organization, event, etc.)
   observations: string[]; // Array of textual observations
   embedding?: EntityEmbedding; // Optional vector representation
 }
 
 interface TemporalEntity extends Entity {
-  id?: string;           // UUID for temporal tracking
-  createdAt: number;     // Creation timestamp
-  updatedAt: number;     // Last modification timestamp
-  validFrom?: number;    // Validity start time
-  validTo?: number;      // Validity end time (null for current)
-  version: number;       // Version counter
-  changedBy?: string;    // Modification source
+  id?: string; // UUID for temporal tracking
+  createdAt: number; // Creation timestamp
+  updatedAt: number; // Last modification timestamp
+  validFrom?: number; // Validity start time
+  validTo?: number; // Validity end time (null for current)
+  version: number; // Version counter
+  changedBy?: string; // Modification source
 }
 ```
 
 #### Relation Structure
+
 ```typescript
 interface Relation {
-  from: string;          // Source entity name
-  to: string;            // Target entity name
-  relationType: string;  // Relationship type (works_at, located_in, etc.)
-  strength?: number;     // 0.0-1.0 relationship strength
-  confidence?: number;   // 0.0-1.0 confidence score
+  from: string; // Source entity name
+  to: string; // Target entity name
+  relationType: string; // Relationship type (works_at, located_in, etc.)
+  strength?: number; // 0.0-1.0 relationship strength
+  confidence?: number; // 0.0-1.0 confidence score
   metadata?: RelationMetadata; // Additional context
 }
 
@@ -385,17 +425,19 @@ interface TemporalRelation extends Relation {
 ```
 
 #### Embedding Structure
+
 ```typescript
 interface EntityEmbedding {
-  vector: number[];      // High-dimensional vector (1536 dimensions for text-embedding-3-small)
-  model: string;         // Embedding model used (e.g., "text-embedding-3-small")
-  lastUpdated: number;   // Timestamp of last embedding update
+  vector: number[]; // High-dimensional vector (1536 dimensions for text-embedding-3-small)
+  model: string; // Embedding model used (e.g., "text-embedding-3-small")
+  lastUpdated: number; // Timestamp of last embedding update
 }
 ```
 
 ### Temporal Awareness System
 
 #### Version History Tracking:
+
 Every entity and relation maintains complete version history:
 
 ```cypher
@@ -416,18 +458,17 @@ Every entity and relation maintains complete version history:
 ```
 
 #### Confidence Decay Mechanism:
+
 Relations automatically decay in confidence over time:
 
 ```typescript
 // Exponential decay calculation
 const decayFactor = Math.pow(0.5, ageInDays / halfLifeDays);
-const decayedConfidence = Math.max(
-  originalConfidence * decayFactor,
-  minConfidenceFloor
-);
+const decayedConfidence = Math.max(originalConfidence * decayFactor, minConfidenceFloor);
 ```
 
 **Decay Parameters:**
+
 - **Half-life**: 30 days (configurable)
 - **Minimum confidence floor**: 0.1 (configurable)
 - **Decay function**: Exponential decay with configurable half-life
@@ -435,6 +476,7 @@ const decayedConfidence = Math.max(
 ### Semantic Search Implementation
 
 #### Hybrid Search Algorithm:
+
 ```typescript
 async search(query: string, options: SearchOptions): Promise<KnowledgeGraph> {
   // Determine search strategy based on available capabilities
@@ -454,6 +496,7 @@ async search(query: string, options: SearchOptions): Promise<KnowledgeGraph> {
 ```
 
 #### Vector Similarity Search:
+
 ```cypher
 // Neo4j vector search query
 CALL db.index.vector.queryNodes('entity_embeddings', 10, $queryVector)
@@ -464,6 +507,7 @@ ORDER BY score DESC
 ```
 
 #### Search Strategy Selection:
+
 1. **Vector-only**: Pure semantic similarity (when embeddings available)
 2. **Keyword-only**: Text-based matching (fallback)
 3. **Hybrid**: Weighted combination of semantic and keyword results
@@ -471,6 +515,7 @@ ORDER BY score DESC
 ### Configuration System
 
 #### Environment Variables:
+
 ```bash
 # Neo4j Connection
 NEO4J_URI=bolt://127.0.0.1:7687
@@ -495,6 +540,7 @@ EMBEDDING_RATE_LIMIT_INTERVAL=60000
 ```
 
 #### Docker Configuration:
+
 ```yaml
 services:
   neo4j:
@@ -503,8 +549,8 @@ services:
       - NEO4J_AUTH=neo4j/memento_password
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
     ports:
-      - "17474:7474"  # HTTP
-      - "17687:7687"  # Bolt
+      - '17474:7474' # HTTP
+      - '17687:7687' # Bolt
     volumes:
       - ./neo4j-data:/data
       - ./neo4j-logs:/logs
@@ -514,6 +560,7 @@ services:
 ### Error Handling and Logging
 
 #### Logger Implementation (`src/utils/logger.ts`):
+
 ```typescript
 interface Logger {
   debug: (message: string, meta?: Record<string, unknown>) => void;
@@ -524,6 +571,7 @@ interface Logger {
 ```
 
 #### Error Propagation:
+
 - **Graceful Degradation**: System continues operating when non-critical components fail
 - **Detailed Error Context**: All errors include relevant metadata for debugging
 - **Recovery Mechanisms**: Automatic retry for transient failures (embedding API calls)
@@ -531,6 +579,7 @@ interface Logger {
 ### CLI Tools (`src/cli/neo4j-setup.ts`)
 
 #### Available Commands:
+
 ```bash
 # Test Neo4j connection
 npm run neo4j:test
@@ -543,6 +592,7 @@ npm run neo4j:init -- --dimensions 768 --similarity euclidean
 ```
 
 #### Command Line Options:
+
 ```typescript
 interface CliOptions {
   uri?: string;
@@ -560,6 +610,7 @@ interface CliOptions {
 ### Testing Architecture
 
 #### Test Structure:
+
 ```
 src/
 ├── **/__vitest__/
@@ -570,6 +621,7 @@ src/
 ```
 
 #### Test Configuration (`vitest.config.ts`):
+
 ```typescript
 export default defineConfig({
   test: {
@@ -598,6 +650,7 @@ export default defineConfig({
 ### Build and Development Process
 
 #### Build Process (`package.json`):
+
 ```json
 {
   "scripts": {
@@ -611,6 +664,7 @@ export default defineConfig({
 ```
 
 #### TypeScript Configuration (`tsconfig.json`):
+
 ```json
 {
   "compilerOptions": {
@@ -629,6 +683,7 @@ export default defineConfig({
 ### Integration Points
 
 #### Claude Desktop Integration:
+
 ```json
 {
   "mcpServers": {
@@ -651,12 +706,14 @@ export default defineConfig({
 #### Performance Characteristics
 
 #### Scalability Features:
+
 1. **Vector Indexing**: Neo4j's native vector indexes for sub-second similarity search
 2. **Connection Pooling**: Efficient Neo4j driver connection management
 3. **Caching**: LRU cache for embedding vectors and frequent queries
 4. **Background Processing**: Non-blocking embedding generation
 
 #### Memory Management:
+
 - **LRU Caching**: Prevents memory leaks with bounded cache sizes
 - **Batch Processing**: Efficient bulk operations for entities and relations
 - **Lazy Loading**: Components initialized only when needed
@@ -664,11 +721,13 @@ export default defineConfig({
 ### Security Considerations
 
 #### API Key Management:
+
 - Environment variable based configuration
 - No hardcoded credentials in source code
 - Graceful degradation when API keys unavailable
 
 #### Database Security:
+
 - Neo4j enterprise authentication
 - Container user mapping for file permissions
 - Volume-based data persistence
@@ -676,6 +735,7 @@ export default defineConfig({
 ### Monitoring and Diagnostics
 
 #### Debug Tools:
+
 - `diagnose_vector_search`: Vector index health checking
 - `debug_embedding_config`: Configuration validation
 - `force_generate_embedding`: Manual embedding regeneration (specific entity or batch repair via the new `limit` parameter)
@@ -691,6 +751,7 @@ export default defineConfig({
 - **Safety**: After every batch, confirm no entities remain with `getEntitiesWithoutEmbeddings(limit)` returning zero rows, then raise the limit slowly if the queue is healthy.
 
 #### Logging Levels:
+
 - **DEBUG**: Detailed operation tracing
 - **INFO**: Normal operation events
 - **WARN**: Non-critical issues
@@ -703,6 +764,7 @@ export default defineConfig({
 The MCP tool handlers follow a consistent pattern with comprehensive error handling:
 
 #### Core Handler Pattern:
+
 ```typescript
 export async function handleToolName(
   args: Record<string, unknown>,
@@ -716,6 +778,7 @@ export async function handleToolName(
 ```
 
 #### Error Handling Strategy:
+
 - **Graceful Degradation**: Tools continue operating when non-critical errors occur
 - **Detailed Error Messages**: All errors include context for debugging
 - **Consistent Response Format**: All responses follow JSON structure
@@ -724,24 +787,28 @@ export async function handleToolName(
 ### Tool-Specific Implementations
 
 #### Entity Management Tools:
+
 - **`create_entities`**: Batch creation with embedding scheduling
 - **`add_observations`**: Observation appending with automatic re-embedding
 - **`delete_entities`**: Cascading deletion of entities and relations
 - **`delete_observations`**: Selective observation removal
 
 #### Relation Management Tools:
+
 - **`create_relations`**: Relation creation with validation and metadata
 - **`get_relation`**: Relation retrieval by triple (from, to, relationType)
 - **`update_relation`**: Relation modification with temporal versioning
 - **`delete_relations`**: Relation removal with graph consistency
 
 #### Search and Retrieval Tools:
+
 - **`search_nodes`**: Text-based entity/relation search
 - **`open_nodes`**: Direct entity retrieval by name
 - **`semantic_search`**: Vector similarity search with hybrid options
 - **`get_entity_embedding`**: Direct embedding vector access
 
 #### Temporal Features:
+
 - **`get_entity_history`**: Complete entity version timeline
 - **`get_relation_history`**: Complete relation version timeline
 - **`get_graph_at_time`**: Point-in-time graph snapshots
@@ -750,6 +817,7 @@ export async function handleToolName(
 ### Debug and Diagnostic Tools
 
 #### Configuration Diagnostics:
+
 ```typescript
 case 'debug_embedding_config':
   // Comprehensive system status check
@@ -765,6 +833,7 @@ case 'debug_embedding_config':
 ```
 
 #### Vector Search Diagnostics:
+
 ```typescript
 case 'diagnose_vector_search':
   // Direct Neo4j vector index inspection
@@ -866,6 +935,7 @@ The updated `callToolHandler.diagnostic.test.ts` unit tests cover both modes, va
 ### Neo4j Setup CLI (`src/cli/neo4j-setup.ts`)
 
 #### Command Architecture:
+
 ```typescript
 // Factory pattern for testability
 const connectionManagerFactory = (config) => new Neo4jConnectionManager(config);
@@ -874,6 +944,7 @@ const schemaManagerFactory = (connectionManager, debug) =>
 ```
 
 #### Connection Testing:
+
 ```typescript
 export async function testConnection(config, debug, connectionManagerFactory) {
   const connectionManager = connectionManagerFactory(config);
@@ -888,6 +959,7 @@ export async function testConnection(config, debug, connectionManagerFactory) {
 ```
 
 #### Schema Initialization:
+
 ```typescript
 export async function initializeSchema(config, debug, recreate) {
   // Test connection first
@@ -911,18 +983,30 @@ export async function initializeSchema(config, debug, recreate) {
 ```
 
 #### Argument Parsing:
+
 ```typescript
-export function parseArgs(argv: string[]): { config: Neo4jConfig; options: { debug: boolean; recreate: boolean } } {
+export function parseArgs(argv: string[]): {
+  config: Neo4jConfig;
+  options: { debug: boolean; recreate: boolean };
+} {
   const config = { ...DEFAULT_NEO4J_CONFIG };
   const options = { debug: true, recreate: false };
 
   // Parse command-line flags
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
-      case '--uri': config.uri = argv[++i]; break;
-      case '--username': config.username = argv[++i]; break;
-      case '--password': config.password = argv[++i]; break;
-      case '--dimensions': config.vectorDimensions = parseInt(argv[++i], 10); break;
+      case '--uri':
+        config.uri = argv[++i];
+        break;
+      case '--username':
+        config.username = argv[++i];
+        break;
+      case '--password':
+        config.password = argv[++i];
+        break;
+      case '--dimensions':
+        config.vectorDimensions = parseInt(argv[++i], 10);
+        break;
       // ... additional parsing
     }
   }
@@ -934,6 +1018,7 @@ export function parseArgs(argv: string[]): { config: Neo4jConfig; options: { deb
 ### Logger Implementation (`src/utils/logger.ts`)
 
 #### MCP-Compatible Logging:
+
 ```typescript
 export const logger = {
   info: (message: string, ...args: any[]) => {
@@ -969,6 +1054,7 @@ export const logger = {
 ```
 
 **Key Design Decisions:**
+
 - **Stderr Output**: Avoids interfering with MCP stdio communication
 - **JSON Formatting**: Structured data for programmatic processing
 - **Stack Traces**: Full error context for debugging
@@ -977,6 +1063,7 @@ export const logger = {
 ### File System Utilities (`src/utils/fs.ts`)
 
 #### Simple Promise-based Wrapper:
+
 ```typescript
 import { promises as fs } from 'fs';
 export { fs };
@@ -1022,10 +1109,13 @@ NEO4J_BOLT_CONTAINER_PORT=7687              # Container Bolt port
 ### Environment Variable Processing:
 
 #### Validation Logic:
+
 ```typescript
 // OpenAI API key validation
 if (!process.env.OPENAI_API_KEY) {
-  logger.warn('OPENAI_API_KEY environment variable is not set. Semantic search will use random embeddings.');
+  logger.warn(
+    'OPENAI_API_KEY environment variable is not set. Semantic search will use random embeddings.'
+  );
 }
 
 // Rate limiting configuration with defaults
@@ -1044,6 +1134,7 @@ const rateLimiterOptions = {
 ### Multi-Level Error Handling:
 
 #### 1. Tool Handler Level:
+
 ```typescript
 try {
   const result = await knowledgeGraphManager.operation(args);
@@ -1057,6 +1148,7 @@ try {
 ```
 
 #### 2. Storage Provider Level:
+
 ```typescript
 try {
   await this.connectionManager.executeQuery(cypherQuery, parameters);
@@ -1067,6 +1159,7 @@ try {
 ```
 
 #### 3. Service Level (Embeddings):
+
 ```typescript
 try {
   const response = await axios.post<OpenAIEmbeddingResponse>(endpoint, payload, config);
@@ -1087,16 +1180,19 @@ try {
 ### Error Recovery Strategies:
 
 #### 1. Graceful Degradation:
+
 - When OpenAI API unavailable → Use random embeddings for testing
 - When vector store unavailable → Fall back to text search
 - When temporal features unavailable → Continue with basic operations
 
 #### 2. Retry Mechanisms:
+
 - Embedding job failures → Automatic retry up to 3 times
 - Network timeouts → Exponential backoff retry
 - Database connection issues → Connection pool recovery
 
 #### 3. Logging Hierarchy:
+
 - **DEBUG**: Detailed operation tracing for development
 - **INFO**: Normal operation events and milestones
 - **WARN**: Non-critical issues that don't stop operation
@@ -1107,6 +1203,7 @@ try {
 ### Test Organization (`src/__vitest__/`):
 
 #### Unit Test Structure:
+
 ```typescript
 describe('KnowledgeGraphManager with StorageProvider', () => {
   it('should accept a StorageProvider in constructor', () => {
@@ -1123,6 +1220,7 @@ describe('KnowledgeGraphManager with StorageProvider', () => {
 ```
 
 #### Mock Strategy:
+
 ```typescript
 const mockProvider: Partial<StorageProvider> = {
   loadGraph: vi.fn().mockResolvedValue(mockGraph),
@@ -1133,6 +1231,7 @@ const mockProvider: Partial<StorageProvider> = {
 ```
 
 #### Test Coverage Goals:
+
 - **Branches**: 50% minimum
 - **Functions**: 50% minimum
 - **Lines**: 50% minimum
@@ -1141,6 +1240,7 @@ const mockProvider: Partial<StorageProvider> = {
 ### Integration Testing:
 
 #### Test Commands:
+
 ```json
 {
   "test": "vitest run",
@@ -1151,6 +1251,7 @@ const mockProvider: Partial<StorageProvider> = {
 ```
 
 #### Environment-Specific Testing:
+
 ```typescript
 // Integration tests only run when TEST_INTEGRATION=true
 if (process.env.TEST_INTEGRATION) {
@@ -1170,32 +1271,34 @@ if (process.env.TEST_INTEGRATION) {
 services:
   neo4j:
     image: neo4j:2025.03.0-enterprise
-    user: "${UID:-1000}:${GID:-1000}"          # Permission mapping
+    user: '${UID:-1000}:${GID:-1000}' # Permission mapping
     environment:
-      - NEO4J_AUTH=neo4j/memento_password       # Authentication
-      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes     # License acceptance
-      - NEO4J_apoc_export_file_enabled=true    # APOC procedures
+      - NEO4J_AUTH=neo4j/memento_password # Authentication
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes # License acceptance
+      - NEO4J_apoc_export_file_enabled=true # APOC procedures
       - NEO4J_apoc_import_file_enabled=true
       - NEO4J_apoc_import_file_use__neo4j__config=true
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
-      - NEO4J_server_memory_pagecache_size=768M   # Memory tuning
+      - NEO4J_server_memory_pagecache_size=768M # Memory tuning
       - NEO4J_server_memory_heap_max__size=1536M
     ports:
-      - "${NEO4J_HTTP_HOST_PORT:-17474}:${NEO4J_HTTP_CONTAINER_PORT:-7474}"
-      - "${NEO4J_BOLT_HOST_PORT:-17687}:${NEO4J_BOLT_CONTAINER_PORT:-7687}"
+      - '${NEO4J_HTTP_HOST_PORT:-17474}:${NEO4J_HTTP_CONTAINER_PORT:-7474}'
+      - '${NEO4J_BOLT_HOST_PORT:-17687}:${NEO4J_BOLT_CONTAINER_PORT:-7687}'
     volumes:
-      - ./neo4j-data:/data          # Persistent data
-      - ./neo4j-logs:/logs          # Log persistence
-      - ./neo4j-import:/import       # Import directory
+      - ./neo4j-data:/data # Persistent data
+      - ./neo4j-logs:/logs # Log persistence
+      - ./neo4j-import:/import # Import directory
 ```
 
 ### Volume Management:
+
 - **Data Persistence**: `/data` directory survives container restarts
 - **Log Retention**: `/logs` for troubleshooting and monitoring
 - **Import Capability**: `/import` for bulk data loading
 
 ### Security Configuration:
+
 - **Enterprise Edition**: Advanced security features
 - **APOC Procedures**: Graph algorithms and utilities
 - **GDS Library**: Graph Data Science algorithms

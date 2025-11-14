@@ -70,7 +70,8 @@ vi.mock('../../neo4j/Neo4jConnectionManager', () => {
                             id: 'test-id',
                             name: params?.name || 'test-entity',
                             entityType: params?.entityType || 'test',
-                            observations: params?.observations || JSON.stringify(['test observation']),
+                            observations:
+                              params?.observations || JSON.stringify(['test observation']),
                             version: 1,
                             createdAt: params?.createdAt || 1234567890,
                             updatedAt: params?.updatedAt || 1234567890,
@@ -78,91 +79,91 @@ vi.mock('../../neo4j/Neo4jConnectionManager', () => {
                             validTo: null,
                           },
                         };
-                    } else if (key === 'r') {
-                      return {
-                        properties: {
-                          id: 'relation-id',
-                          relationType: 'test-relation',
-                          strength: 0.5,
-                          confidence: 0.8,
-                          metadata: null,
-                          version: 1,
-                          createdAt: 1234567890,
-                          updatedAt: 1234567890,
-                          validFrom: 1234567890,
-                          validTo: null,
-                        },
-                      };
-                    } else if (key === 'from') {
-                      return {
-                        properties: {
-                          name: 'entity1',
-                          id: 'from-id',
-                        },
-                      };
-                    } else if (key === 'to') {
-                      return {
-                        properties: {
-                          name: 'entity2',
-                          id: 'to-id',
-                        },
-                      };
-                    } else if (key === 'fromName') {
-                      return 'entity1';
-                    } else if (key === 'toName') {
-                      return 'entity2';
-                    } else if (key === 'score') {
-                      return 0.95;
-                    } else if (key === 'outgoing') {
-                      // Return an empty array by default, or add mock outgoing relationships
-                      return [
-                        {
-                          rel: {
-                            properties: {
-                              id: 'out-rel-id',
-                              relationType: 'test-relation',
-                              strength: 0.5,
-                              confidence: 0.8,
-                              metadata: null,
-                              version: 1,
-                              createdAt: 1234567890,
+                      } else if (key === 'r') {
+                        return {
+                          properties: {
+                            id: 'relation-id',
+                            relationType: 'test-relation',
+                            strength: 0.5,
+                            confidence: 0.8,
+                            metadata: null,
+                            version: 1,
+                            createdAt: 1234567890,
+                            updatedAt: 1234567890,
+                            validFrom: 1234567890,
+                            validTo: null,
+                          },
+                        };
+                      } else if (key === 'from') {
+                        return {
+                          properties: {
+                            name: 'entity1',
+                            id: 'from-id',
+                          },
+                        };
+                      } else if (key === 'to') {
+                        return {
+                          properties: {
+                            name: 'entity2',
+                            id: 'to-id',
+                          },
+                        };
+                      } else if (key === 'fromName') {
+                        return 'entity1';
+                      } else if (key === 'toName') {
+                        return 'entity2';
+                      } else if (key === 'score') {
+                        return 0.95;
+                      } else if (key === 'outgoing') {
+                        // Return an empty array by default, or add mock outgoing relationships
+                        return [
+                          {
+                            rel: {
+                              properties: {
+                                id: 'out-rel-id',
+                                relationType: 'test-relation',
+                                strength: 0.5,
+                                confidence: 0.8,
+                                metadata: null,
+                                version: 1,
+                                createdAt: 1234567890,
+                              },
+                            },
+                            to: {
+                              properties: {
+                                id: 'to-id',
+                                name: 'entity2',
+                              },
                             },
                           },
-                          to: {
-                            properties: {
-                              id: 'to-id',
-                              name: 'entity2',
+                        ];
+                      } else if (key === 'incoming') {
+                        // Return an empty array by default, or add mock incoming relationships
+                        return [
+                          {
+                            rel: {
+                              properties: {
+                                id: 'in-rel-id',
+                                relationType: 'test-relation',
+                                strength: 0.5,
+                                confidence: 0.8,
+                                metadata: null,
+                                version: 1,
+                                createdAt: 1234567890,
+                              },
+                            },
+                            from: {
+                              properties: {
+                                id: 'from-id',
+                                name: 'entity1',
+                              },
                             },
                           },
-                        },
-                      ];
-                    } else if (key === 'incoming') {
-                      // Return an empty array by default, or add mock incoming relationships
-                      return [
-                        {
-                          rel: {
-                            properties: {
-                              id: 'in-rel-id',
-                              relationType: 'test-relation',
-                              strength: 0.5,
-                              confidence: 0.8,
-                              metadata: null,
-                              version: 1,
-                              createdAt: 1234567890,
-                            },
-                          },
-                          from: {
-                            properties: {
-                              id: 'from-id',
-                              name: 'entity1',
-                            },
-                          },
-                        },
-                      ];
-                    }
-                    return null;
-                  }),
-                },
+                        ];
+                      }
+                      return null;
+                    }),
+                  },
                 ],
               });
             }),
@@ -488,9 +489,7 @@ describe('Neo4jStorageProvider', () => {
 
       // Verify that temporal validation methods are implemented
       expect(storageProvider.createRelations).toBeDefined();
-
     });
-
   });
 
   describe('addObservations', () => {
@@ -514,7 +513,6 @@ describe('Neo4jStorageProvider', () => {
 
       // Verify that temporal validation methods are implemented
       expect(storageProvider.addObservations).toBeDefined();
-
     });
   });
 
@@ -543,7 +541,6 @@ describe('Neo4jStorageProvider', () => {
 
       // Verify that temporal validation methods are implemented
       expect(storageProvider.addObservations).toBeDefined();
-
     });
   });
 

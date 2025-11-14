@@ -3,6 +3,7 @@
 ## Phase 0: Refactor - Extract Common Versioning Logic (DRY)
 
 ### Task 0.1: Create `_createNewEntityVersion` private method
+
 **File:** `src/storage/neo4j/Neo4jStorageProvider.ts` (new private method)
 
 Extract the complete versioning logic from `addObservations` into a new private method:
@@ -184,6 +185,7 @@ private async _createNewEntityVersion(
 ```
 
 **Validation:**
+
 - Method compiles without errors
 - Covers all 5 steps of versioning logic
 - Uses entity names (not IDs) for relationship targets
@@ -191,6 +193,7 @@ private async _createNewEntityVersion(
 ---
 
 ### Task 0.2: Refactor `addObservations` to use `_createNewEntityVersion`
+
 **File:** `src/storage/neo4j/Neo4jStorageProvider.ts:852-1072`
 
 Replace the complex inline versioning logic with a call to the new shared method:
@@ -275,6 +278,7 @@ async addObservations(
 ```
 
 **Validation:**
+
 - Code compiles and passes existing tests
 - Method is now ~30 lines instead of ~200
 - All relationship handling delegated to `_createNewEntityVersion`
@@ -282,6 +286,7 @@ async addObservations(
 ---
 
 ### Task 0.3: Refactor `deleteObservations` to use `_createNewEntityVersion`
+
 **File:** `src/storage/neo4j/Neo4jStorageProvider.ts:1121-1230`
 
 Replace the incomplete implementation with a call to the shared method:
@@ -349,6 +354,7 @@ async deleteObservations(
 ```
 
 **Validation:**
+
 - Code compiles and method is now ~30 lines instead of ~110
 - All relationship handling automatically inherited from `_createNewEntityVersion`
 - Test that relationships are preserved through deleteObservations
@@ -358,11 +364,13 @@ async deleteObservations(
 ## Phase 1: Add Temporal Validation to Relationship Creation
 
 ### Task 1.1: Fix `createRelations` check and creation queries
+
 **File:** `src/storage/neo4j/Neo4jStorageProvider.ts:756-760, 794-810`
 
 Add temporal validation to both entity check and relationship creation:
 
 **Step 1: Fix entity check query (lines 756-760):**
+
 ```typescript
 // OLD
 const checkQuery = `
@@ -382,6 +390,7 @@ const checkQuery = `
 ```
 
 **Step 2: Fix creation query (lines 794-810):**
+
 ```typescript
 // OLD
 const createQuery = `
@@ -403,6 +412,7 @@ const createQuery = `
 ```
 
 **Validation:**
+
 - Test creates relationships only with current entities
 - Test with archived entities returns no results
 - createRelations skips archived entities gracefully
@@ -410,26 +420,33 @@ const createQuery = `
 ---
 
 ### Task 1.2: Fix `saveGraph` relationship creation
+
 **File:** `src/storage/neo4j/Neo4jStorageProvider.ts:415-432`
 
 Add temporal validation:
 
 ```typescript
 // OLD (line 415-432)
-await txc.run(`
+await txc.run(
+  `
   MATCH (from:Entity {name: $fromName})
   MATCH (to:Entity {name: $toName})
   CREATE (from)-[r:RELATES_TO {...}]->(to)
-`, params);
+`,
+  params
+);
 
 // NEW
-await txc.run(`
+await txc.run(
+  `
   MATCH (from:Entity {name: $fromName})
   WHERE from.validTo IS NULL
   MATCH (to:Entity {name: $toName})
   WHERE to.validTo IS NULL
   CREATE (from)-[r:RELATES_TO {...}]->(to)
-`, params);
+`,
+  params
+);
 ```
 
 **Validation:** saveGraph only creates relationships with current entities
@@ -437,6 +454,7 @@ await txc.run(`
 ---
 
 ### Task 1.3: Fix `updateRelation` recreation query
+
 **File:** `src/storage/neo4j/Neo4jStorageProvider.ts:1409-1424`
 
 Add temporal validation:
@@ -468,9 +486,11 @@ const createQuery = `
 ## Phase 2: Test Coverage
 
 ### Task 2.1: Create temporal integrity test file
+
 **File:** `src/storage/__vitest__/neo4j/Neo4jTemporalIntegrity.test.ts` (NEW)
 
 Create comprehensive test suite covering:
+
 - deleteObservations preserves relationships
 - addObservations uses current entity versions
 - createRelations validates temporal state
@@ -478,6 +498,7 @@ Create comprehensive test suite covering:
 - Point-in-time queries are consistent
 
 **Template structure:**
+
 ```typescript
 describe('Neo4j Temporal Integrity', () => {
   describe('deleteObservations relationship preservation', () => {
@@ -515,9 +536,11 @@ describe('Neo4j Temporal Integrity', () => {
 ---
 
 ### Task 2.2: Update existing Neo4j storage provider tests
+
 **File:** `src/storage/__vitest__/neo4j/Neo4jStorageProvider.test.ts`
 
 Add temporal validation assertions to existing tests:
+
 - Update `deleteObservations` tests to verify relationships preserved
 - Update `createRelations` tests to verify temporal validation
 - Add relationship count assertions
@@ -531,6 +554,7 @@ Add temporal validation assertions to existing tests:
 ## Phase 3: Validation and Deployment
 
 ### Task 3.1: Run validation
+
 ```bash
 npx openspec validate fix-temporal-relationship-integrity --strict
 ```
@@ -540,6 +564,7 @@ npx openspec validate fix-temporal-relationship-integrity --strict
 ---
 
 ### Task 3.2: Run full test suite
+
 ```bash
 npm test
 ```
@@ -549,11 +574,13 @@ npm test
 ---
 
 ### Task 3.3: Verify temporal integrity in production
+
 1. Run tests against production database
 2. Verify relationship counts are reasonable (current ≈ total after fix)
 3. Monitor for any new phantom relationships
 
 **Expected:**
+
 - No phantom relationships created after fix
 - Relationship count growth is linear with entity count
 - All temporal queries return consistent state
@@ -561,13 +588,16 @@ npm test
 ---
 
 ### Task 3.4: Document the fix
+
 **File:** `CHANGELOG.md`
 
 Add entry:
+
 ```markdown
 ## [Version] - Date
 
 ### Fixed
+
 - **Critical:** Fixed temporal relationship integrity issues in Neo4j storage provider
   - `deleteObservations` now preserves all relationships through entity versioning
   - All relationship creation operations validate entity temporal state (`validTo IS NULL`)

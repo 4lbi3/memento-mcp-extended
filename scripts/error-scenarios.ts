@@ -27,7 +27,10 @@ async function main(): Promise<void> {
       strictMode: true,
     });
   } catch (error) {
-    console.log('   strict-mode error caught:', error instanceof Error ? error.message : String(error));
+    console.log(
+      '   strict-mode error caught:',
+      error instanceof Error ? error.message : String(error)
+    );
   }
 
   console.log('\n3) Keyword search baseline for performance measurement:');
@@ -36,7 +39,9 @@ async function main(): Promise<void> {
     limit: 10,
     semanticSearch: false,
   });
-  console.log(`   entities=${keywordResult.entities.length}, durationMs=${Date.now() - keywordStart}`);
+  console.log(
+    `   entities=${keywordResult.entities.length}, durationMs=${Date.now() - keywordStart}`
+  );
   console.log('   diagnostics:', keywordResult.searchDiagnostics);
   if (typeof storageProvider.close === 'function') {
     await storageProvider.close();
