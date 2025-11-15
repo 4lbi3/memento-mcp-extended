@@ -162,6 +162,26 @@ DETACH DELETE job;
 
 These same cleanup routines are also exposed programmatically via `Neo4jJobStore.cleanupJobs()`.
 
+### Soft delete maintenance
+
+Introduced in release 0.3.9.18, entity and relation deletions now set `validTo` rather than removing data, so every action is preserved for historical queries.
+Over time the graph will accumulate archived versions, which administrators can trim manually with the Neo4j storage provider:
+
+```typescript
+const retentionMs = 90 * 24 * 60 * 60 * 1000;
+const cutoff = Date.now() - retentionMs;
+
+const purgedEntities = await storageProvider.purgeArchivedEntities(cutoff);
+const purgedRelations = await storageProvider.purgeArchivedRelations(cutoff);
+console.log(
+  `Purged ${purgedEntities} archived entity versions and ${purgedRelations} relations before ${new Date(
+    cutoff
+  ).toISOString()}`
+);
+```
+
+Both methods only delete nodes/relations where `validTo IS NOT NULL` and earlier than the supplied cutoff, so the current graph stays intact. They run inside transactions, return the count of removed records, and log the entity names at `debug` level for auditing. Schedule these calls in an administrative maintenance window (or via a dedicated script) and ensure you have backups, because purged data is permanently gone.
+
 ### Stale Job Recovery
 
 Jobs that remain in `processing` because a worker crashed or stopped heartbeating are automatically reset by background recovery loops. The worker periodically searches for `:EmbedJob` nodes with `status: 'processing'` and `lock_until` in the past, clears the lock metadata, and returns the job to `pending` so another worker can pick it up. By default recovery runs every 60 seconds, but you can tune or disable it via `EMBED_JOB_RECOVERY_INTERVAL` (milliseconds); setting the value to `0` turns the periodic sweep off.

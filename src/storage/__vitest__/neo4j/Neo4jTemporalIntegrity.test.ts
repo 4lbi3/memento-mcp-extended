@@ -49,9 +49,14 @@ vi.mock('../../../embeddings/EmbeddingServiceFactory', () => ({
 vi.mock('../../neo4j/Neo4jConnectionManager', () => ({
   Neo4jConnectionManager: vi.fn().mockImplementation(() => ({
     getSession: vi.fn(),
+    executeQuery: vi.fn(),
     close: vi.fn(),
   })),
 }));
+
+const toNeo4jInt = (value: number) => ({
+  toNumber: () => value,
+});
 
 describe('Neo4j Temporal Integrity', () => {
   let storageProvider: Neo4jStorageProvider;
@@ -65,6 +70,11 @@ describe('Neo4j Temporal Integrity', () => {
     rollback: ReturnType<typeof vi.fn>;
   };
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let mockConnectionManager: {
+    getSession: ReturnType<typeof vi.fn>;
+    executeQuery: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -81,9 +91,15 @@ describe('Neo4j Temporal Integrity', () => {
     };
 
     const connectionManager = new (Neo4jConnectionManager as unknown as {
-      new (): { getSession: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
+      new (): {
+        getSession: ReturnType<typeof vi.fn>;
+        executeQuery: ReturnType<typeof vi.fn>;
+        close: ReturnType<typeof vi.fn>;
+      };
     })();
+    mockConnectionManager = connectionManager;
     connectionManager.getSession.mockResolvedValue(mockSession);
+    connectionManager.executeQuery.mockResolvedValue({ records: [] });
 
     storageProvider = new Neo4jStorageProvider({
       connectionManager,
@@ -616,6 +632,186 @@ describe('Neo4j Temporal Integrity', () => {
       expect(outgoingCalls).toHaveLength(1);
       expect(outgoingCalls[0].version).toBe(3);
       expect(outgoingCalls[0].metadata).toEqual({ reason: 'friend' });
+    });
+  });
+
+  describe('soft delete maintenance', () => {
+    it('soft deletes entities and cascades relationship invalidation', async () => {
+      const nowValue = 1_234_567;
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowValue);
+
+      mockTransaction.run.mockImplementation(
+        async (query: string, params: Record<string, unknown>) => {
+          if (query.includes('SET e.validTo = $now')) {
+            return {
+              records: [
+                {
+                  get: (key: string) => {
+                    if (key === 'deletedEntityCount') {
+                      return toNeo4jInt(1);
+                    }
+                    if (key === 'entityIds') {
+                      return ['entity-1'];
+                    }
+                    if (key === 'deletedEntityNames') {
+                      return ['EntityA'];
+                    }
+                    return undefined;
+                  },
+                },
+              ],
+            };
+          }
+
+          if (query.includes('MATCH (e:Entity)-[r:RELATES_TO]->()')) {
+            return {
+              records: [
+                {
+                  get: () => toNeo4jInt(1),
+                },
+              ],
+            };
+          }
+
+          if (query.includes('MATCH ()-[r:RELATES_TO]->(e:Entity)')) {
+            return {
+              records: [
+                {
+                  get: () => toNeo4jInt(2),
+                },
+              ],
+            };
+          }
+
+          return { records: [] };
+        }
+      );
+
+      await storageProvider.deleteEntities(['EntityA']);
+
+      expect(mockTransaction.run).toHaveBeenCalledTimes(3);
+      expect(mockTransaction.run.mock.calls[0][1].names).toEqual(['EntityA']);
+      expect(mockTransaction.run.mock.calls[0][1].now).toBe(nowValue);
+      expect(mockTransaction.run.mock.calls[1][1].entityIds).toEqual(['entity-1']);
+      expect(mockTransaction.run.mock.calls[2][1].entityIds).toEqual(['entity-1']);
+      nowSpy.mockRestore();
+    });
+
+    it('soft deletes relations by updating validTo timestamps only', async () => {
+      const nowValue = 2_000_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowValue);
+
+      mockTransaction.run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
+        expect(query).toContain('SET r.validTo = $now');
+        expect(query).toContain('r.validTo IS NULL');
+
+        return {
+          records: [
+            {
+              get: (key: string) => {
+                if (key === 'invalidatedCount') {
+                  return toNeo4jInt(1);
+                }
+                return undefined;
+              },
+            },
+          ],
+        };
+      });
+
+      await storageProvider.deleteRelations([
+        { from: 'Alice', to: 'Bob', relationType: 'KNOWS' },
+      ]);
+
+      expect(mockTransaction.run).toHaveBeenCalledTimes(1);
+      expect(mockTransaction.run.mock.calls[0][1].now).toBe(nowValue);
+      nowSpy.mockRestore();
+    });
+
+    it('loadGraph excludes archived entities and relationships', async () => {
+      const queries: string[] = [];
+      mockConnectionManager.executeQuery.mockImplementation(async (query: string) => {
+        queries.push(query);
+        return { records: [] };
+      });
+
+      await storageProvider.loadGraph();
+
+      expect(queries[0]).toContain('WHERE e.validTo IS NULL');
+      expect(queries[1]).toContain('r.validTo IS NULL');
+      expect(queries[1]).toContain('from.validTo IS NULL');
+      expect(queries[1]).toContain('to.validTo IS NULL');
+    });
+
+    it('getGraphAtTime returns historical versions via validTo bounds', async () => {
+      const queries: string[] = [];
+      mockConnectionManager.executeQuery.mockImplementation(async (query: string) => {
+        queries.push(query);
+        return { records: [] };
+      });
+
+      await storageProvider.getGraphAtTime(1_000);
+
+      expect(queries[0]).toContain('(e.validTo IS NULL OR e.validTo > $timestamp)');
+      expect(queries[1]).toContain('(r.validTo IS NULL OR r.validTo > $timestamp)');
+    });
+  });
+
+  describe('purge maintenance helpers', () => {
+    it('purges archived entities, logs names, and returns count', async () => {
+      const record = {
+        get: (key: string) => {
+          if (key === 'purgedCount') {
+            return toNeo4jInt(2);
+          }
+          if (key === 'entityNames') {
+            return ['EntityA', 'EntityB'];
+          }
+          return undefined;
+        },
+      };
+
+      mockTransaction.run.mockResolvedValueOnce({ records: [record] });
+
+      const count = await storageProvider.purgeArchivedEntities(1_500_000_000);
+
+      expect(count).toBe(2);
+      expect(mockTransaction.run).toHaveBeenCalledWith(
+        expect.stringContaining('FOREACH (entity IN entities | DETACH DELETE entity)'),
+        expect.objectContaining({ cutoffTimestamp: 1_500_000_000 })
+      );
+      expect(mockTransaction.run.mock.calls[0][0]).toContain('WHERE e.validTo IS NOT NULL');
+      expect(mockTransaction.commit).toHaveBeenCalled();
+    });
+
+    it('purges archived relations and returns count', async () => {
+      const record = {
+        get: (key: string) => {
+          if (key === 'purgedCount') {
+            return toNeo4jInt(3);
+          }
+          return undefined;
+        },
+      };
+
+      mockTransaction.run.mockResolvedValueOnce({ records: [record] });
+
+      const count = await storageProvider.purgeArchivedRelations(1_000_000_000);
+
+      expect(count).toBe(3);
+      expect(mockTransaction.run).toHaveBeenCalledWith(
+        expect.stringContaining('FOREACH (relation IN relations | DELETE relation)'),
+        expect.objectContaining({ cutoffTimestamp: 1_000_000_000 })
+      );
+      expect(mockTransaction.run.mock.calls[0][0]).toContain('WHERE r.validTo IS NOT NULL');
+    });
+
+    it('rolls back when purge fails mid-transaction', async () => {
+      mockTransaction.run.mockRejectedValueOnce(new Error('boom'));
+
+      await expect(storageProvider.purgeArchivedEntities(1)).rejects.toThrow('boom');
+      expect(mockTransaction.rollback).toHaveBeenCalled();
+      expect(mockTransaction.commit).not.toHaveBeenCalled();
     });
   });
 });

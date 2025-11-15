@@ -98,9 +98,6 @@ export async function testConnection(
   connectionManagerFactory: ConnectionManagerFactory = defaultConnectionManagerFactory
 ): Promise<boolean> {
   console.log('Testing connection to Neo4j...');
-  console.log(`  URI: ${config.uri}`);
-  console.log(`  Username: ${config.username}`);
-  console.log(`  Database: ${config.database}`);
 
   const connectionManager = connectionManagerFactory(config);
 
@@ -240,7 +237,7 @@ Usage:
 Options:
   --uri <uri>              Neo4j server URI (default: ${DEFAULT_NEO4J_CONFIG.uri})
   --username <username>    Neo4j username (default: ${DEFAULT_NEO4J_CONFIG.username})
-  --password <password>    Neo4j password (default: ${DEFAULT_NEO4J_CONFIG.password})
+  --password <password>    Neo4j password (default: [REDACTED])
   --database <name>        Neo4j database name (default: ${DEFAULT_NEO4J_CONFIG.database})
   --vector-index <name>    Vector index name (default: ${DEFAULT_NEO4J_CONFIG.vectorIndexName})
   --dimensions <number>    Vector dimensions (default: ${DEFAULT_NEO4J_CONFIG.vectorDimensions})

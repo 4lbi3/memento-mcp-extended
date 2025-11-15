@@ -117,6 +117,27 @@ function logNeo4jStorageProviderError(
   return category;
 }
 
+function isNeo4jIntegerLike(value: unknown): value is { toNumber: () => number } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'toNumber' in value &&
+    typeof (value as { toNumber: unknown }).toNumber === 'function'
+  );
+}
+
+function extractCount(value: unknown): number {
+  if (isNeo4jIntegerLike(value)) {
+    return (value as { toNumber: () => number }).toNumber();
+  }
+
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  return 0;
+}
+
 /**
  * A storage provider that uses Neo4j to store the knowledge graph
  */
@@ -341,7 +362,12 @@ export class Neo4jStorageProvider implements StorageProvider {
       const relationQuery = `
         MATCH (from:Entity)-[r:RELATES_TO]->(to:Entity)
         WHERE r.validTo IS NULL
-        RETURN from.name AS fromName, to.name AS toName, r
+          AND from.validTo IS NULL
+          AND to.validTo IS NULL
+        RETURN
+          from.name AS fromName,
+          to.name AS toName,
+          r
       `;
 
       // Execute query to get all current relations
@@ -543,6 +569,8 @@ export class Neo4jStorageProvider implements StorageProvider {
           WHERE from.name IN $entityNames
           AND to.name IN $entityNames
           AND r.validTo IS NULL
+          AND from.validTo IS NULL
+          AND to.validTo IS NULL
           RETURN from.name AS fromName, to.name AS toName, r
         `;
 
@@ -626,6 +654,8 @@ export class Neo4jStorageProvider implements StorageProvider {
         WHERE from.name IN $names
         AND to.name IN $names
         AND r.validTo IS NULL
+        AND from.validTo IS NULL
+        AND to.validTo IS NULL
         RETURN from.name AS fromName, to.name AS toName, r
       `;
 
@@ -1220,8 +1250,8 @@ export class Neo4jStorageProvider implements StorageProvider {
   }
 
   /**
-   * Delete entities and their relations
-   * @param entityNames Array of entity names to delete
+   * Soft-delete entities by closing their current version and invalidating related edges.
+   * @param entityNames Array of entity names to mark as archived
    */
   async deleteEntities(entityNames: string[]): Promise<void> {
     try {
@@ -1236,14 +1266,75 @@ export class Neo4jStorageProvider implements StorageProvider {
         const txc = session.beginTransaction();
 
         try {
-          // Delete entities and their relations
-          const deleteQuery = `
+          const now = Date.now();
+
+          const softDeleteEntitiesQuery = `
             MATCH (e:Entity)
             WHERE e.name IN $names
-            DETACH DELETE e
+              AND e.validTo IS NULL
+            SET e.validTo = $now
+            RETURN collect(e.id) AS entityIds,
+              collect(e.name) AS deletedEntityNames,
+              count(e) AS deletedEntityCount
           `;
 
-          await txc.run(deleteQuery, { names: entityNames });
+          const entityResult = await txc.run(softDeleteEntitiesQuery, {
+            names: entityNames,
+            now,
+          });
+
+          const entityRecord = entityResult.records[0];
+          const deletedEntityCount = extractCount(entityRecord?.get('deletedEntityCount'));
+          const deletedEntityIds =
+            (entityRecord?.get('entityIds') as string[] | undefined) ?? [];
+          const deletedEntityNames =
+            (entityRecord?.get('deletedEntityNames') as string[] | undefined) ?? [];
+
+          let invalidatedRelationCount = 0;
+
+          if (deletedEntityIds.length > 0) {
+            const invalidateOutgoingQuery = `
+              MATCH (e:Entity)-[r:RELATES_TO]->()
+              WHERE e.id IN $entityIds
+                AND r.validTo IS NULL
+              SET r.validTo = $now
+              RETURN count(r) AS invalidatedCount
+            `;
+
+            const outgoingResult = await txc.run(invalidateOutgoingQuery, {
+              entityIds: deletedEntityIds,
+              now,
+            });
+            invalidatedRelationCount += extractCount(
+              outgoingResult.records[0]?.get('invalidatedCount')
+            );
+
+            const invalidateIncomingQuery = `
+              MATCH ()-[r:RELATES_TO]->(e:Entity)
+              WHERE e.id IN $entityIds
+                AND r.validTo IS NULL
+              SET r.validTo = $now
+              RETURN count(r) AS invalidatedCount
+            `;
+
+            const incomingResult = await txc.run(invalidateIncomingQuery, {
+              entityIds: deletedEntityIds,
+              now,
+            });
+            invalidatedRelationCount += extractCount(
+              incomingResult.records[0]?.get('invalidatedCount')
+            );
+          }
+
+          logger.info('Neo4jStorageProvider: Soft deleted entities', {
+            requestedEntityNames: entityNames,
+            deletedEntityNames,
+            count: deletedEntityCount,
+          });
+          logger.info('Neo4jStorageProvider: Invalidated relationships for soft-deleted entities', {
+            entityIds: deletedEntityIds,
+            relationCount: invalidatedRelationCount,
+          });
 
           // Commit transaction
           await txc.commit();
@@ -1338,8 +1429,8 @@ export class Neo4jStorageProvider implements StorageProvider {
   }
 
   /**
-   * Delete relations from the graph
-   * @param relations Array of relations to delete
+   * Soft-delete relations by updating their `validTo` timestamps (current graph stays intact).
+   * @param relations Array of relations to mark as archived
    */
   async deleteRelations(relations: Relation[]): Promise<void> {
     try {
@@ -1354,20 +1445,38 @@ export class Neo4jStorageProvider implements StorageProvider {
         const txc = session.beginTransaction();
 
         try {
+          const now = Date.now();
+          let invalidatedRelationCount = 0;
+
           for (const relation of relations) {
-            // Delete relation query
             const deleteQuery = `
               MATCH (from:Entity {name: $fromName})-[r:RELATES_TO]->(to:Entity {name: $toName})
               WHERE r.relationType = $relationType
-              DELETE r
+                AND r.validTo IS NULL
+              SET r.validTo = $now
+              RETURN count(r) AS invalidatedCount
             `;
 
-            await txc.run(deleteQuery, {
+            const relationResult = await txc.run(deleteQuery, {
               fromName: relation.from,
               toName: relation.to,
               relationType: relation.relationType,
+              now,
             });
+
+            invalidatedRelationCount += extractCount(
+              relationResult.records[0]?.get('invalidatedCount')
+            );
           }
+
+          logger.info('Neo4jStorageProvider: Soft deleted relations', {
+            requestedRelations: relations.map((relation) => ({
+              from: relation.from,
+              to: relation.to,
+              type: relation.relationType,
+            })),
+            count: invalidatedRelationCount,
+          });
 
           // Commit transaction
           await txc.commit();
@@ -1387,6 +1496,119 @@ export class Neo4jStorageProvider implements StorageProvider {
           to: relation.to,
           type: relation.relationType,
         })),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Permanently remove archived entity versions before the provided cutoff timestamp.
+   * @param cutoffTimestamp Timestamp (in milliseconds) before which archived entities are eligible for purge
+   * @returns Number of archived entity versions that were purged
+   */
+  async purgeArchivedEntities(cutoffTimestamp: number): Promise<number> {
+    try {
+      if (!Number.isFinite(cutoffTimestamp)) {
+        throw new Error('Invalid cutoff timestamp');
+      }
+
+      const session = await this.connectionManager.getSession();
+
+      try {
+        const txc = session.beginTransaction();
+
+        try {
+          const purgeQuery = `
+            MATCH (e:Entity)
+            WHERE e.validTo IS NOT NULL
+              AND e.validTo < $cutoffTimestamp
+            WITH collect(e) AS entities,
+              collect(e.name) AS entityNames,
+              count(e) AS purgedCount
+            FOREACH (entity IN entities | DETACH DELETE entity)
+            RETURN entityNames, purgedCount
+          `;
+
+          const result = await txc.run(purgeQuery, { cutoffTimestamp });
+          const record = result.records[0];
+          const purgedCount = extractCount(record?.get('purgedCount'));
+          const entityNames = (record?.get('entityNames') as string[] | undefined) ?? [];
+          const entityNamesToLog = entityNames.slice(0, 50);
+
+          logger.info('Neo4jStorageProvider: Purged archived entities', {
+            cutoffTimestamp,
+            purgedCount,
+          });
+          logger.debug('Neo4jStorageProvider: Archived entity names purged', {
+            cutoffTimestamp,
+            entityNames: entityNamesToLog,
+            totalEntities: entityNames.length,
+          });
+
+          await txc.commit();
+          return purgedCount;
+        } catch (error) {
+          await txc.rollback();
+          throw error;
+        }
+      } finally {
+        await session.close();
+      }
+    } catch (error) {
+      logNeo4jStorageProviderError('purge archived entities', error, {
+        cutoffTimestamp,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Permanently remove archived relationships before the provided cutoff timestamp.
+   * @param cutoffTimestamp Timestamp (in milliseconds) before which archived relations are eligible for purge
+   * @returns Number of archived relations that were purged
+   */
+  async purgeArchivedRelations(cutoffTimestamp: number): Promise<number> {
+    try {
+      if (!Number.isFinite(cutoffTimestamp)) {
+        throw new Error('Invalid cutoff timestamp');
+      }
+
+      const session = await this.connectionManager.getSession();
+
+      try {
+        const txc = session.beginTransaction();
+
+        try {
+          const purgeQuery = `
+            MATCH ()-[r:RELATES_TO]->()
+            WHERE r.validTo IS NOT NULL
+              AND r.validTo < $cutoffTimestamp
+            WITH collect(r) AS relations, count(r) AS purgedCount
+            FOREACH (relation IN relations | DELETE relation)
+            RETURN purgedCount
+          `;
+
+          const result = await txc.run(purgeQuery, { cutoffTimestamp });
+          const record = result.records[0];
+          const purgedCount = extractCount(record?.get('purgedCount'));
+
+          logger.info('Neo4jStorageProvider: Purged archived relations', {
+            cutoffTimestamp,
+            purgedCount,
+          });
+
+          await txc.commit();
+          return purgedCount;
+        } catch (error) {
+          await txc.rollback();
+          throw error;
+        }
+      } finally {
+        await session.close();
+      }
+    } catch (error) {
+      logNeo4jStorageProviderError('purge archived relations', error, {
+        cutoffTimestamp,
       });
       throw error;
     }
@@ -1475,6 +1697,8 @@ export class Neo4jStorageProvider implements StorageProvider {
         MATCH (from:Entity {name: $fromName})-[r:RELATES_TO]->(to:Entity {name: $toName})
         WHERE r.relationType = $relationType
         AND r.validTo IS NULL
+        AND from.validTo IS NULL
+        AND to.validTo IS NULL
         RETURN r, from, to
       `;
 

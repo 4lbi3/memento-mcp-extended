@@ -100,6 +100,20 @@ export interface StorageProvider {
   deleteRelations(relations: Relation[]): Promise<void>;
 
   /**
+   * Permanently remove archived entity versions before the provided cutoff timestamp
+   * @param cutoffTimestamp Timestamp (milliseconds) before which archived entities may be deleted
+   * @returns Number of archived entity versions removed
+   */
+  purgeArchivedEntities?(cutoffTimestamp: number): Promise<number>;
+
+  /**
+   * Permanently remove archived relations before the provided cutoff timestamp
+   * @param cutoffTimestamp Timestamp (milliseconds) before which archived relations may be deleted
+   * @returns Number of archived relations removed
+   */
+  purgeArchivedRelations?(cutoffTimestamp: number): Promise<number>;
+
+  /**
    * Get a specific relation by its source, target, and type
    * @param from Source entity name
    * @param to Target entity name
@@ -224,7 +238,7 @@ export class StorageProviderValidator {
       typeof obj.deleteRelations === 'function' &&
       typeof obj.getEntity === 'function';
 
-    // Check that any optional methods, if present, are functions
+      // Check that any optional methods, if present, are functions
     const optionalMethodsValid =
       (!obj.getRelation || typeof obj.getRelation === 'function') &&
       (!obj.updateRelation || typeof obj.updateRelation === 'function') &&
@@ -232,6 +246,8 @@ export class StorageProviderValidator {
       (!obj.getRelationHistory || typeof obj.getRelationHistory === 'function') &&
       (!obj.getGraphAtTime || typeof obj.getGraphAtTime === 'function') &&
       (!obj.getDecayedGraph || typeof obj.getDecayedGraph === 'function') &&
+      (!obj.purgeArchivedEntities || typeof obj.purgeArchivedEntities === 'function') &&
+      (!obj.purgeArchivedRelations || typeof obj.purgeArchivedRelations === 'function') &&
       (!obj.updateEntityEmbedding || typeof obj.updateEntityEmbedding === 'function') &&
       (!obj.findSimilarEntities || typeof obj.findSimilarEntities === 'function') &&
       (!obj.semanticSearch || typeof obj.semanticSearch === 'function');

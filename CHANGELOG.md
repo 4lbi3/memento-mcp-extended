@@ -5,6 +5,33 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.18] - 2025-11-15
+
+### Added
+
+- `Neo4jStorageProvider.deleteEntities()` and `deleteRelations()` now perform soft deletes by setting `validTo` timestamps, logging counts, and cascading invalidation to related edges instead of removing graph data, keeping all historical versions intact.
+- Maintenance helpers `purgeArchivedEntities()` and `purgeArchivedRelations()` permanently remove records whose `validTo` predates a supplied cutoff inside transactions with safety guards against current versions and audit logging the purged names/counts.
+- Temporal integrity coverage (`Neo4jTemporalIntegrity.test.ts`) now exercises the soft delete flows, purge helpers, and the new spec requirements so archived data stays hidden from normal read paths while remaining queryable historically.
+
+### Changed
+
+- All primary read paths (`loadGraph()`, `getEntity()`, relation lookups, etc.) now require `validTo IS NULL` to avoid resurfacing archived versions, matching the updated `temporal-versioning` capability.
+
+### Documentation
+
+- Added a permanent “Soft delete maintenance” section to the README describing the purge workflow and when to schedule these administrative cleanups.
+
+## [0.3.9.17] - 2025-11-14
+
+### Added
+
+- The job store now exposes periodic stale-job recovery (default 60s) and runs an initial scan on worker startup so `processing` jobs whose `lock_until` timestamps have expired are cleared and returned to `pending` without resetting their attempt count.
+- A `releaseJobs()` helper lets workers explicitly clear leases for batches they never started, making the IDs available immediately to other workers while ignoring jobs owned by someone else and making empty batches a no-op.
+
+### Changed
+
+- `Neo4jEmbeddingJobManager.processJobs()` now releases unprocessed leases when rate limits fire or the loop stops early, and the new coverage confirms stale recovery, lease release, and heartbeat interactions keep the queue from freezing.
+
 ## [0.3.9.16] - 2025-11-14
 
 ### Added
