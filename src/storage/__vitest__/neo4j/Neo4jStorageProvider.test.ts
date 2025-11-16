@@ -372,6 +372,34 @@ describe('Neo4jStorageProvider', () => {
       expect(result).toBeDefined();
       expect(result.entities).toBeDefined();
     });
+
+    it('caches repeated keyword searches to avoid extra Neo4j calls', async () => {
+      const executeSpy = storageProvider.getConnectionManager().executeQuery;
+
+      await storageProvider.searchNodes('test-query', { limit: 5 });
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+
+      await storageProvider.searchNodes('test-query', { limit: 5 });
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('invalidates the cache after mutating the graph', async () => {
+      const executeSpy = storageProvider.getConnectionManager().executeQuery;
+
+      await storageProvider.searchNodes('test-query', { limit: 5 });
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+
+      await storageProvider.createEntities([
+        {
+          name: 'fresh-entity',
+          entityType: 'test',
+          observations: ['cache bust'],
+        },
+      ]);
+
+      await storageProvider.searchNodes('test-query', { limit: 5 });
+      expect(executeSpy).toHaveBeenCalledTimes(4);
+    });
   });
 
   describe('openNodes', () => {

@@ -12,6 +12,7 @@ import neo4j from 'neo4j-driver';
 import { Neo4jVectorStore } from './Neo4jVectorStore.js';
 import { EmbeddingServiceFactory } from '../../embeddings/EmbeddingServiceFactory.js';
 import type { EmbeddingService } from '../../embeddings/EmbeddingService.js';
+import { SearchResultCache, type SearchCacheConfig } from '../SearchResultCache.js';
 
 /**
  * Configuration options for Neo4j storage provider
@@ -46,6 +47,11 @@ export interface Neo4jStorageProviderOptions {
      */
     minConfidence?: number;
   };
+
+  /**
+   * Optional cache configuration for keyword searches
+   */
+  searchCacheConfig?: SearchCacheConfig;
 }
 
 /**
@@ -152,6 +158,7 @@ export class Neo4jStorageProvider implements StorageProvider {
   };
   private vectorStore: Neo4jVectorStore;
   private embeddingService: EmbeddingService | null = null;
+  private readonly searchCache: SearchResultCache<KnowledgeGraph>;
 
   /**
    * Create a new Neo4jStorageProvider
@@ -185,6 +192,9 @@ export class Neo4jStorageProvider implements StorageProvider {
       similarityFunction: 'cosine',
       entityNodeLabel: 'Entity',
     });
+
+    // Set up search cache
+    this.searchCache = new SearchResultCache<KnowledgeGraph>(options?.searchCacheConfig);
 
     logger.debug('Neo4jStorageProvider: Initializing embedding service');
     try {
@@ -281,6 +291,10 @@ export class Neo4jStorageProvider implements StorageProvider {
     };
   }
 
+  private escapeRegexInput(input: string): string {
+    return input.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  }
+
   /**
    * Parse a Neo4j relationship into a relation object
    * @param rel Relationship properties
@@ -333,6 +347,14 @@ export class Neo4jStorageProvider implements StorageProvider {
       confidence: confidence ?? null,
       metadata,
     };
+  }
+
+  private cloneKnowledgeGraph(graph: KnowledgeGraph): KnowledgeGraph {
+    return JSON.parse(JSON.stringify(graph));
+  }
+
+  private invalidateSearchCache(): void {
+    this.searchCache.clear();
   }
 
   /**
@@ -498,6 +520,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           // Commit transaction
           await txc.commit();
+          this.invalidateSearchCache();
           logger.info(
             `Saved graph with ${graph.entities.length} entities and ${graph.relations.length} relations to Neo4j`
           );
@@ -530,8 +553,24 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       // Prepare search parameters
       const rawLimit = options.limit || 10;
+      const cacheKeyParams = {
+        limit: rawLimit,
+        entityTypes: options.entityTypes ? [...options.entityTypes] : undefined,
+        caseSensitive: options.caseSensitive,
+      };
+
+      const cachedGraph = this.searchCache.get(query, cacheKeyParams);
+      if (cachedGraph) {
+        logger.debug('Neo4jStorageProvider: search cache hit', {
+          query,
+          limit: rawLimit,
+          entityTypes: options.entityTypes,
+        });
+        return this.cloneKnowledgeGraph(cachedGraph);
+      }
+
       const parameters: Record<string, unknown> = {
-        query: `(?i).*${query}.*`, // Case-insensitive regex pattern
+        query: `(?i).*${this.escapeRegexInput(query)}.*`, // Case-insensitive regex pattern
         limit: neo4j.int(Math.floor(rawLimit)),
       };
 
@@ -563,6 +602,8 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       // Get relations between found entities
       const entityNames = entities.map((e) => e.name);
+      let relations: Relation[] = [];
+
       if (entityNames.length > 0) {
         const relationsQuery = `
           MATCH (from:Entity)-[r:RELATES_TO]->(to:Entity)
@@ -579,34 +620,26 @@ export class Neo4jStorageProvider implements StorageProvider {
         });
 
         // Process relation results
-        const relations = relationsResult.records.map((record) => {
+        relations = relationsResult.records.map((record) => {
           const fromName = record.get('fromName');
           const toName = record.get('toName');
           const rel = record.get('r').properties;
 
           return this.relationshipToRelation(rel, fromName, toName);
         });
-
-        const timeTaken = Date.now() - startTime;
-
-        // Return the search results as a graph
-        return {
-          entities,
-          relations,
-          total: entities.length,
-          timeTaken,
-        };
       }
 
       const timeTaken = Date.now() - startTime;
-
-      // Return just the entities if no relations
-      return {
+      const graphResult: KnowledgeGraph = {
         entities,
-        relations: [],
+        relations,
         total: entities.length,
         timeTaken,
       };
+
+      this.searchCache.set(query, graphResult, cacheKeyParams);
+
+      return graphResult;
     } catch (error) {
       logNeo4jStorageProviderError('search nodes', error, {
         query,
@@ -810,6 +843,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           // Commit transaction
           await txc.commit();
+          this.invalidateSearchCache();
 
           return createdEntities;
         } catch (error) {
@@ -932,6 +966,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           // Commit transaction
           await txc.commit();
+          this.invalidateSearchCache();
 
           return createdRelations;
         } catch (error) {
@@ -1230,6 +1265,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           // Commit transaction
           await txc.commit();
+          this.invalidateSearchCache();
 
           return results;
         } catch (error) {
