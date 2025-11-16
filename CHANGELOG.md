@@ -5,6 +5,21 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.20] - 2025-11-16
+
+### Added
+
+- `SearchResultCache` now backs `Neo4jStorageProvider.searchNodes()`, returning cached graphs for identical keyword queries and invalidating the cache on any entity/relation mutation so repeated reads stay fast without serving stale knowledge graphs.
+
+## [0.3.9.19] - 2025-11-16
+
+### Added
+
+- Fully implemented the Neo4j history tracking (`Neo4jEntityHistoryTracking.test.ts`) and timestamp consistency (`Neo4jEntityHistoryTimestampConsistency.test.ts`) suites so creation, updates, and soft-deletes are exercised end-to-end with mocked transactions, version histories, and temporal assertions instead of TODO stubs.
+- The new tests verify that `validFrom`/`validTo` transitions are captured, that version chains remain consistent, and that the original `createdAt` timestamp is preserved across delayed and rapid updates, catching regressions like the destructive delete bug earlier in the pipeline.
+- `src/callToolHandler.ts` (34-line stub) was removed to avoid confusion with the real 511-line handler under `src/server/handlers/callToolHandler.ts`, ensuring no dead assets remain in the repo.
+- `Neo4jStorageProvider.searchNodes()` now escapes user-provided queries before building the case-insensitive regex so special characters cannot trigger regex injection or catastrophic backtracking, keeping Neo4j safe from crafted DoS inputs.
+
 ## [0.3.9.18] - 2025-11-15
 
 ### Added
@@ -20,21 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - Added a permanent “Soft delete maintenance” section to the README describing the purge workflow and when to schedule these administrative cleanups.
-
-## [0.3.9.19] - 2025-11-16
-
-### Added
-
-- Fully implemented the Neo4j history tracking (`Neo4jEntityHistoryTracking.test.ts`) and timestamp consistency (`Neo4jEntityHistoryTimestampConsistency.test.ts`) suites so creation, updates, and soft-deletes are exercised end-to-end with mocked transactions, version histories, and temporal assertions instead of TODO stubs.
-- The new tests verify that `validFrom`/`validTo` transitions are captured, that version chains remain consistent, and that the original `createdAt` timestamp is preserved across delayed and rapid updates, catching regressions like the destructive delete bug earlier in the pipeline.
-- `src/callToolHandler.ts` (34-line stub) was removed to avoid confusion with the real 511-line handler under `src/server/handlers/callToolHandler.ts`, ensuring no dead assets remain in the repo.
-- `Neo4jStorageProvider.searchNodes()` now escapes user-provided queries before building the case-insensitive regex so special characters cannot trigger regex injection or catastrophic backtracking, keeping Neo4j safe from crafted DoS inputs.
-
-## [0.3.9.20] - 2025-11-16
-
-### Added
-
-- `SearchResultCache` now backs `Neo4jStorageProvider.searchNodes()`, returning cached graphs for identical keyword queries and invalidating the cache on any entity/relation mutation so repeated reads stay fast without serving stale knowledge graphs.
 
 ## [0.3.9.17] - 2025-11-14
 
