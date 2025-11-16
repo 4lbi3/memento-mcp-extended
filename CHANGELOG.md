@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added a permanent “Soft delete maintenance” section to the README describing the purge workflow and when to schedule these administrative cleanups.
 
+## [0.3.9.19] - 2025-11-16
+
+### Added
+
+- Fully implemented the Neo4j history tracking (`Neo4jEntityHistoryTracking.test.ts`) and timestamp consistency (`Neo4jEntityHistoryTimestampConsistency.test.ts`) suites so creation, updates, and soft-deletes are exercised end-to-end with mocked transactions, version histories, and temporal assertions instead of TODO stubs.
+- The new tests verify that `validFrom`/`validTo` transitions are captured, that version chains remain consistent, and that the original `createdAt` timestamp is preserved across delayed and rapid updates, catching regressions like the destructive delete bug earlier in the pipeline.
+
 ## [0.3.9.17] - 2025-11-14
 
 ### Added
