@@ -206,6 +206,39 @@ OPTIONS {
 }
 ```
 
+### Type Guard Patterns
+
+The refactor introduced dedicated capability interfaces (`EmbeddingCapableProvider`, `VectorSearchCapableProvider`, `TemporalCapableProvider`, `ConnectionCapableProvider`, `PurgeCapableProvider`) and accompanying type guards (`hasEmbeddingCapability`, `hasVectorSearchCapability`, `hasTemporalCapability`, `hasConnectionManager`, `hasPurgeCapability`, `hasSemanticSearchCapabilities`). These guards make optional behavior discoverable at runtime while also narrowing the provider types for the compiler.
+
+Use them whenever your logic consumes optional features to avoid `as any` casts:
+
+```ts
+import {
+  hasConnectionManager,
+  hasEmbeddingCapability,
+  hasSemanticSearchCapabilities,
+} from '../storage/capabilities.js';
+import type { StorageProvider } from '../storage/StorageProvider.js';
+
+async function describeProvider(provider: StorageProvider): Promise<void> {
+  if (hasConnectionManager(provider)) {
+    const manager = provider.getConnectionManager();
+    await manager.verifyConnections();
+  }
+
+  if (hasEmbeddingCapability(provider)) {
+    const count = await provider.countEntitiesWithEmbeddings();
+    console.log('Embedded entities', count);
+  }
+
+  if (hasSemanticSearchCapabilities(provider)) {
+    await provider.semanticSearch('memory safety', { limit: 5 });
+  }
+}
+```
+
+Each guard complements the capability interfaces so you can implement features in custom providers and expose them safely. `hasSemanticSearchCapabilities` combines the embedding and vector search guards, so features that need both can check a single predicate before calling `updateEntityEmbedding`/`semanticSearch`. Applying the guards consistently also keeps `KnowledgeGraphManager` and the embedding job manager free of `as any` shims.
+
 ### Observability and Health
 
 - Embedding job loops now delegate to a reusable `runRecurringTask` helper that classifies every failure as `TRANSIENT`, `PERMANENT`, or `CRITICAL`, applies exponential backoff, and publishes a `/health` endpoint (configurable via `HEALTH_PORT`) that reports consecutive failure counts, success rates, and the current state (`HEALTHY`, `DEGRADED`, `CRITICAL`).

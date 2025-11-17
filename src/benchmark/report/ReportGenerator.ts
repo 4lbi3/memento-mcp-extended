@@ -12,7 +12,10 @@ export class ReportGenerator {
    * @param report Benchmark report data
    * @param outputDir Output directory for reports
    */
-  generateReports(report: BenchmarkReport, outputDir: string = '.'): {
+  generateReports(
+    report: BenchmarkReport,
+    outputDir: string = '.'
+  ): {
     markdownPath: string;
     jsonPath: string;
   } {
@@ -103,7 +106,9 @@ export class ReportGenerator {
       lines.push('');
       lines.push(`**Question:** ${result.question}`);
       lines.push('');
-      lines.push(`**Score:** ${result.score.toFixed(2)}/100 (Accuracy: ${result.accuracy.toFixed(2)}, Completeness: ${result.completeness.toFixed(2)})`);
+      lines.push(
+        `**Score:** ${result.score.toFixed(2)}/100 (Accuracy: ${result.accuracy.toFixed(2)}, Completeness: ${result.completeness.toFixed(2)})`
+      );
       lines.push('');
       lines.push('**Gold Answer:**');
       lines.push('```');
@@ -165,7 +170,9 @@ export class ReportGenerator {
     console.log(`  - Retrieval:  ${(report.performance.retrievalDuration / 1000).toFixed(2)}s`);
     console.log(`  - Evaluation: ${(report.performance.evaluationDuration / 1000).toFixed(2)}s`);
     console.log('');
-    console.log(`API Requests: ${report.apiStats.totalRequests} total, ${report.apiStats.failedRequests} failed, ${report.apiStats.retries} retries`);
+    console.log(
+      `API Requests: ${report.apiStats.totalRequests} total, ${report.apiStats.failedRequests} failed, ${report.apiStats.retries} retries`
+    );
     console.log('='.repeat(80));
   }
 }
