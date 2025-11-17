@@ -62,6 +62,9 @@ export interface CacheStats {
   averageLookupTime: number;
 }
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
 /**
  * A memory-efficient cache for search results
  */
@@ -99,8 +102,7 @@ export class SearchResultCache<T> {
    * @param obj The object to measure
    * @returns Approximate size in bytes
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private estimateSize(obj: any): number {
+  private estimateSize(obj: unknown): number {
     if (obj === null || obj === undefined) {
       return 0;
     }
@@ -116,8 +118,11 @@ export class SearchResultCache<T> {
     }
 
     // For simple objects with a 'data' property containing a string
-    if (obj && typeof obj === 'object' && typeof obj.data === 'string') {
-      return obj.data.length * 2 + 100; // String length + overhead
+    if (isPlainObject(obj)) {
+      const { data } = obj;
+      if (typeof data === 'string') {
+        return data.length * 2 + 100; // String length + overhead
+      }
     }
 
     // Use JSON stringification as an approximation for complex objects

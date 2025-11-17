@@ -48,16 +48,17 @@ export interface TemporalEntity extends Entity {
 // This allows tests to access validation methods directly from the interface
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace TemporalEntity {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export function isTemporalEntity(obj: any): boolean {
+  export function isTemporalEntity(obj: unknown): obj is TemporalEntity {
     return TemporalEntityValidator.isTemporalEntity(obj);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export function hasValidTimeRange(obj: any): boolean {
+  export function hasValidTimeRange(obj: unknown): boolean {
     return TemporalEntityValidator.hasValidTimeRange(obj);
   }
 }
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
 
 /**
  * TemporalEntityValidator class with validation methods
@@ -66,37 +67,45 @@ export class TemporalEntityValidator {
   /**
    * Validates if an object conforms to the TemporalEntity interface
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static isTemporalEntity(obj: any): boolean {
+  static isTemporalEntity(obj: unknown): obj is TemporalEntity {
     // First ensure it's a valid Entity
+    if (!isPlainObject(obj)) {
+      return false;
+    }
+
+    const { name, entityType, observations } = obj as Partial<TemporalEntity>;
+
     if (
-      !obj ||
-      typeof obj.name !== 'string' ||
-      typeof obj.entityType !== 'string' ||
-      !Array.isArray(obj.observations)
+      typeof name !== 'string' ||
+      typeof entityType !== 'string' ||
+      !Array.isArray(observations)
     ) {
       return false;
     }
 
     // Then check temporal properties
+    const { createdAt, updatedAt, version } = obj as Partial<TemporalEntity>;
+
     if (
-      typeof obj.createdAt !== 'number' ||
-      typeof obj.updatedAt !== 'number' ||
-      typeof obj.version !== 'number'
+      typeof createdAt !== 'number' ||
+      typeof updatedAt !== 'number' ||
+      typeof version !== 'number'
     ) {
       return false;
     }
 
     // Optional properties type checking
-    if (obj.validFrom !== undefined && typeof obj.validFrom !== 'number') {
+    const { validFrom, validTo, changedBy } = obj as Partial<TemporalEntity>;
+
+    if (validFrom !== undefined && typeof validFrom !== 'number') {
       return false;
     }
 
-    if (obj.validTo !== undefined && typeof obj.validTo !== 'number') {
+    if (validTo !== undefined && typeof validTo !== 'number') {
       return false;
     }
 
-    if (obj.changedBy !== undefined && typeof obj.changedBy !== 'string') {
+    if (changedBy !== undefined && typeof changedBy !== 'string') {
       return false;
     }
 
@@ -106,8 +115,7 @@ export class TemporalEntityValidator {
   /**
    * Checks if an entity has a valid temporal range
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static hasValidTimeRange(obj: any): boolean {
+  static hasValidTimeRange(obj: unknown): boolean {
     if (!this.isTemporalEntity(obj)) {
       return false;
     }

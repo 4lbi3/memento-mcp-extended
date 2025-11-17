@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { KnowledgeGraphManager } from '../KnowledgeGraphManager.js';
+import { KnowledgeGraphManager, type Entity } from '../KnowledgeGraphManager.js';
+import type { Neo4jEmbeddingJobManager } from '../embeddings/Neo4jEmbeddingJobManager.js';
+import type { QueueStatus } from '../storage/neo4j/Neo4jJobStore.js';
+import type { EmbeddingCapableProvider } from '../storage/capabilities.js';
 import { VectorStore } from '../types/vector-store.js';
 import { EntityEmbedding } from '../types/entity-embedding.js';
+
+type KnowledgeGraphManagerWithPrivate = KnowledgeGraphManager & {
+  updateEntityEmbedding(entityName: string, embedding: EntityEmbedding): Promise<void>;
+};
 
 // Create mocks before vi.mock calls
 const createVectorStoreMock = () => ({
@@ -26,54 +33,61 @@ vi.mock('../storage/VectorStoreFactory.js', () => {
 });
 
 // Mock storage provider
-const createMockStorageProvider = () => ({
-  getEntity: vi.fn().mockImplementation((name) => {
-    return Promise.resolve({
-      name,
-      entityType: 'Test',
-      observations: ['Test observation'],
-      embedding: {
-        vector: Array(1536)
-          .fill(0)
-          .map((_, i) => i / 1536),
-        model: 'test-model',
-        lastUpdated: Date.now(),
-      },
-    });
-  }),
-  openNodes: vi.fn().mockResolvedValue({
-    entities: [
-      {
-        name: 'Entity1',
-        entityType: 'Person',
-        observations: ['Person observation'],
-      },
-      {
-        name: 'Entity2',
-        entityType: 'Place',
-        observations: ['Place observation'],
-      },
-    ],
-    relations: [],
-  }),
-  loadGraph: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
-  saveGraph: vi.fn().mockResolvedValue(undefined),
-  createEntities: vi.fn().mockImplementation((entities) => Promise.resolve(entities)),
-  createRelations: vi.fn().mockResolvedValue([]),
-  updateEntityEmbedding: vi.fn().mockResolvedValue(undefined),
-  deleteEntities: vi.fn().mockResolvedValue(undefined),
-  deleteObservations: vi.fn().mockResolvedValue(undefined),
-  deleteRelations: vi.fn().mockResolvedValue(undefined),
-  searchNodes: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
-  addObservations: vi.fn().mockImplementation((observations) => {
-    return Promise.resolve(
-      observations.map((obs) => ({
-        entityName: obs.entityName,
-        addedObservations: obs.contents,
-      }))
-    );
-  }),
-});
+const createMockStorageProvider = (): EmbeddingCapableProvider => {
+  const provider = {
+    getEntity: vi.fn().mockImplementation((name: string) => {
+      return Promise.resolve({
+        name,
+        entityType: 'Test',
+        observations: ['Test observation'],
+        embedding: {
+          vector: Array(1536)
+            .fill(0)
+            .map((_, i) => i / 1536),
+          model: 'test-model',
+          lastUpdated: Date.now(),
+        },
+      });
+    }),
+    openNodes: vi.fn().mockResolvedValue({
+      entities: [
+        {
+          name: 'Entity1',
+          entityType: 'Person',
+          observations: ['Person observation'],
+        },
+        {
+          name: 'Entity2',
+          entityType: 'Place',
+          observations: ['Place observation'],
+        },
+      ],
+      relations: [],
+    }),
+    loadGraph: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
+    saveGraph: vi.fn().mockResolvedValue(undefined),
+    createEntities: vi.fn().mockImplementation((entities) => Promise.resolve(entities)),
+    createRelations: vi.fn().mockResolvedValue([]),
+    updateEntityEmbedding: vi.fn().mockResolvedValue(undefined),
+    deleteEntities: vi.fn().mockResolvedValue(undefined),
+    deleteObservations: vi.fn().mockResolvedValue(undefined),
+    deleteRelations: vi.fn().mockResolvedValue(undefined),
+    searchNodes: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
+    addObservations: vi.fn().mockImplementation((observations) => {
+      return Promise.resolve(
+        observations.map((obs) => ({
+          entityName: obs.entityName,
+          addedObservations: obs.contents,
+        }))
+      );
+    }),
+    getEntityEmbedding: vi.fn().mockResolvedValue(null),
+    getEntitiesWithoutEmbeddings: vi.fn().mockResolvedValue([]),
+    countEntitiesWithEmbeddings: vi.fn().mockResolvedValue(0),
+  };
+
+  return provider satisfies EmbeddingCapableProvider;
+};
 
 // Mock embedding service
 const createMockEmbeddingService = () => ({
@@ -86,11 +100,30 @@ const createMockEmbeddingService = () => ({
 });
 
 // Mock embedding job manager
-const createMockEmbeddingJobManager = (embeddingService: any) => ({
-  scheduleEntityEmbedding: vi.fn().mockResolvedValue('job-id'),
-  processJobs: vi.fn().mockResolvedValue({ processed: 1, successful: 1, failed: 0 }),
-  embeddingService: embeddingService,
-});
+const createMockEmbeddingJobManager = (
+  embeddingService: ReturnType<typeof createMockEmbeddingService>
+): Partial<Neo4jEmbeddingJobManager> => {
+  const mockManager = {
+    scheduleEntityEmbedding: vi
+      .fn<Promise<string | null>, [string, number?]>()
+      .mockResolvedValue('job-id'),
+    processJobs: vi
+      .fn<Promise<{ processed: number; successful: number; failed: number }>>()
+      .mockResolvedValue({ processed: 1, successful: 1, failed: 0 }),
+    getEmbeddingService() {
+      return embeddingService;
+    },
+    getQueueStatus: vi.fn<Promise<QueueStatus>>().mockResolvedValue({
+      pending: 0,
+      processing: 0,
+      completed: 0,
+      failed: 0,
+      totalJobs: 0,
+    }),
+  };
+
+  return mockManager satisfies Partial<Neo4jEmbeddingJobManager>;
+};
 
 // Global instance of the mock vector store
 let vectorStoreMock: ReturnType<typeof createVectorStoreMock>;
@@ -102,7 +135,7 @@ describe('KnowledgeGraphManager with VectorStore', () => {
   let manager: KnowledgeGraphManager;
   let mockStorageProvider: ReturnType<typeof createMockStorageProvider>;
   let mockEmbeddingService: ReturnType<typeof createMockEmbeddingService>;
-  let mockEmbeddingJobManager: any;
+  let mockEmbeddingJobManager: Partial<Neo4jEmbeddingJobManager>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -116,7 +149,7 @@ describe('KnowledgeGraphManager with VectorStore', () => {
     // Create manager with options
     manager = new KnowledgeGraphManager({
       storageProvider: mockStorageProvider,
-      embeddingJobManager: mockEmbeddingJobManager,
+      embeddingJobManager: mockEmbeddingJobManager as Neo4jEmbeddingJobManager,
       vectorStoreOptions: {
         type: 'chroma',
         collectionName: 'test_collection',
@@ -161,7 +194,7 @@ describe('KnowledgeGraphManager with VectorStore', () => {
 
   it('should add entity embeddings to vector store when created', async () => {
     // Create an entity with embedding
-    const entity = {
+    const entity: Entity = {
       name: 'TestEntity',
       entityType: 'Test',
       observations: ['Test observation'],
@@ -196,7 +229,7 @@ describe('KnowledgeGraphManager with VectorStore', () => {
     };
 
     // Call the update method
-    await (manager as any).updateEntityEmbedding(entityName, embedding);
+    await (manager as KnowledgeGraphManagerWithPrivate).updateEntityEmbedding(entityName, embedding);
 
     // Verify vector store was updated
     expect(vectorStoreMock.addVector).toHaveBeenCalledWith(

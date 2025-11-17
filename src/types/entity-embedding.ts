@@ -35,8 +35,7 @@ export interface SearchFilter {
   /**
    * Filter value
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  value: any;
+  value: unknown;
 }
 
 /**
@@ -140,8 +139,7 @@ export interface SearchResult {
   /**
    * The matching entity
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  entity: any;
+  entity: Record<string, unknown>;
 
   /**
    * Overall relevance score
@@ -156,8 +154,7 @@ export interface SearchResult {
   /**
    * Explanation of the scoring (if requested)
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  explanation?: any;
+  explanation?: Record<string, unknown>;
 }
 
 /**

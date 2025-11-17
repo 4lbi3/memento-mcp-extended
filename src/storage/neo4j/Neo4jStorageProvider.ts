@@ -3,6 +3,13 @@ import type { KnowledgeGraph, Entity } from '../../KnowledgeGraphManager.js';
 import type { Relation } from '../../types/relation.js';
 import type { EntityEmbedding, SemanticSearchOptions } from '../../types/entity-embedding.js';
 import { v4 as uuidv4 } from 'uuid';
+import type {
+  ConnectionCapableProvider,
+  EmbeddingCapableProvider,
+  PurgeCapableProvider,
+  TemporalCapableProvider,
+  VectorSearchCapableProvider,
+} from '../capabilities.js';
 import { Neo4jConnectionManager } from './Neo4jConnectionManager.js';
 import { DEFAULT_NEO4J_CONFIG, type Neo4jConfig } from './Neo4jConfig.js';
 import { Neo4jSchemaManager } from './Neo4jSchemaManager.js';
@@ -57,7 +64,7 @@ export interface Neo4jStorageProviderOptions {
 /**
  * Extended Entity interface with additional properties needed for Neo4j
  */
-interface ExtendedEntity extends Entity {
+type ExtendedEntityFields = {
   id?: string;
   version?: number;
   createdAt?: number;
@@ -65,17 +72,12 @@ interface ExtendedEntity extends Entity {
   validFrom?: number;
   validTo?: number | null;
   changedBy?: string | null;
-}
+};
 
-/**
- * Extended Relation interface with additional properties needed for Neo4j
- * Note: This doesn't extend Relation to avoid type conflicts with strength/confidence
- */
-interface ExtendedRelation {
+type ExtendedEntity<TEntity extends Entity = Entity> = TEntity & ExtendedEntityFields;
+
+type ExtendedRelationFields = {
   id?: string;
-  from: string;
-  to: string;
-  relationType: string;
   version?: number;
   createdAt?: number;
   updatedAt?: number;
@@ -85,7 +87,9 @@ interface ExtendedRelation {
   strength?: number | null | undefined;
   confidence?: number | null | undefined;
   metadata?: Record<string, unknown> | null;
-}
+};
+
+type ExtendedRelation<TRelation extends Relation = Relation> = TRelation & ExtendedRelationFields;
 
 // These interfaces are used for documentation purposes to understand the Neo4j data model
 
@@ -99,9 +103,20 @@ interface Neo4jSemanticSearchOptions extends SemanticSearchOptions {
 /**
  * Knowledge graph with optional diagnostics
  */
-interface KnowledgeGraphWithDiagnostics extends KnowledgeGraph {
+interface KnowledgeGraphWithDiagnostics<
+  TEntity extends Entity = Entity,
+  TRelation extends Relation = Relation,
+> extends KnowledgeGraph<TEntity, TRelation> {
   diagnostics?: Record<string, unknown>;
 }
+
+type SemanticSearchDiagnostics = Record<string, unknown> & {
+  query: string;
+  startTime: number;
+  stepsTaken: Array<Record<string, unknown>>;
+  endTime?: number;
+  totalTimeTaken?: number;
+};
 
 function logNeo4jStorageProviderError(
   operation: string,
@@ -147,7 +162,18 @@ function extractCount(value: unknown): number {
 /**
  * A storage provider that uses Neo4j to store the knowledge graph
  */
-export class Neo4jStorageProvider implements StorageProvider {
+export class Neo4jStorageProvider<
+    TEntity extends Entity = Entity,
+    TRelation extends Relation = Relation,
+  >
+  implements
+    StorageProvider<TEntity, TRelation>,
+    ConnectionCapableProvider,
+    EmbeddingCapableProvider<TEntity>,
+    VectorSearchCapableProvider<TEntity>,
+    TemporalCapableProvider<TEntity, TRelation>,
+    PurgeCapableProvider
+{
   private connectionManager: Neo4jConnectionManager;
   private schemaManager: Neo4jSchemaManager;
   private readonly config: Neo4jConfig;
@@ -158,7 +184,7 @@ export class Neo4jStorageProvider implements StorageProvider {
   };
   private vectorStore: Neo4jVectorStore;
   private embeddingService: EmbeddingService | null = null;
-  private readonly searchCache: SearchResultCache<KnowledgeGraph>;
+  private readonly searchCache: SearchResultCache<KnowledgeGraph<TEntity, TRelation>>;
 
   /**
    * Create a new Neo4jStorageProvider
@@ -194,7 +220,9 @@ export class Neo4jStorageProvider implements StorageProvider {
     });
 
     // Set up search cache
-    this.searchCache = new SearchResultCache<KnowledgeGraph>(options?.searchCacheConfig);
+    this.searchCache = new SearchResultCache<KnowledgeGraph<TEntity, TRelation>>(
+      options?.searchCacheConfig
+    );
 
     logger.debug('Neo4jStorageProvider: Initializing embedding service');
     try {
@@ -263,7 +291,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * @param node Neo4j node properties
    * @returns Entity object
    */
-  private nodeToEntity(node: Record<string, unknown>): ExtendedEntity {
+  private nodeToEntity(node: Record<string, unknown>): TEntity {
     const observations =
       typeof node.observations === 'string' ? JSON.parse(node.observations as string) : [];
 
@@ -276,7 +304,7 @@ export class Neo4jStorageProvider implements StorageProvider {
         }
       : undefined;
 
-    return {
+    const entity: Entity & ExtendedEntityFields = {
       name: node.name as string,
       entityType: node.entityType as string,
       observations,
@@ -289,6 +317,8 @@ export class Neo4jStorageProvider implements StorageProvider {
       validTo: node.validTo as number | null | undefined,
       changedBy: node.changedBy as string | null | undefined,
     };
+
+    return entity as TEntity;
   }
 
   private escapeRegexInput(input: string): string {
@@ -313,7 +343,7 @@ export class Neo4jStorageProvider implements StorageProvider {
     rel: Record<string, unknown>,
     fromNode: string,
     toNode: string
-  ): Relation {
+  ): TRelation {
     // Extract timestamps from the Neo4j relation for metadata
     const now = Date.now();
     const createdAt = (rel.createdAt as number) || now;
@@ -339,7 +369,7 @@ export class Neo4jStorageProvider implements StorageProvider {
     const confidence = rel.confidence as number | null | undefined;
 
     // Create a standard Relation object with proper type handling
-    return {
+    const relation: Relation & ExtendedRelationFields = {
       from: fromNode,
       to: toNode,
       relationType: rel.relationType as string,
@@ -347,9 +377,13 @@ export class Neo4jStorageProvider implements StorageProvider {
       confidence: confidence ?? null,
       metadata,
     };
+
+    return relation as TRelation;
   }
 
-  private cloneKnowledgeGraph(graph: KnowledgeGraph): KnowledgeGraph {
+  private cloneKnowledgeGraph(
+    graph: KnowledgeGraph<TEntity, TRelation>
+  ): KnowledgeGraph<TEntity, TRelation> {
     return JSON.parse(JSON.stringify(graph));
   }
 
@@ -360,7 +394,7 @@ export class Neo4jStorageProvider implements StorageProvider {
   /**
    * Load the complete knowledge graph from Neo4j
    */
-  async loadGraph(): Promise<KnowledgeGraph> {
+  async loadGraph(): Promise<KnowledgeGraph<TEntity, TRelation>> {
     try {
       const startTime = Date.now();
 
@@ -425,7 +459,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Save a complete knowledge graph to Neo4j (warning: this will overwrite existing data)
    * @param graph The knowledge graph to save
    */
-  async saveGraph(graph: KnowledgeGraph): Promise<void> {
+  async saveGraph(graph: KnowledgeGraph<TEntity, TRelation>): Promise<void> {
     try {
       // Start a new session
       const session = await this.connectionManager.getSession();
@@ -440,7 +474,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           // Process entities
           for (const entity of graph.entities) {
-            const extendedEntity = entity as ExtendedEntity;
+            const extendedEntity = entity as ExtendedEntity<TEntity>;
             const params = {
               id: extendedEntity.id || uuidv4(),
               name: entity.name,
@@ -476,7 +510,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           // Process relations
           for (const relation of graph.relations) {
-            const extendedRelation = relation as ExtendedRelation;
+            const extendedRelation = relation as ExtendedRelation<TRelation>;
             const params = {
               id: extendedRelation.id || uuidv4(),
               fromName: relation.from,
@@ -547,7 +581,10 @@ export class Neo4jStorageProvider implements StorageProvider {
    * @param query The search query string
    * @param options Optional search parameters
    */
-  async searchNodes(query: string, options: SearchOptions = {}): Promise<KnowledgeGraph> {
+  async searchNodes(
+    query: string,
+    options: SearchOptions = {}
+  ): Promise<KnowledgeGraph<TEntity, TRelation>> {
     try {
       const startTime = Date.now();
 
@@ -602,7 +639,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
       // Get relations between found entities
       const entityNames = entities.map((e) => e.name);
-      let relations: Relation[] = [];
+      let relations: TRelation[] = [];
 
       if (entityNames.length > 0) {
         const relationsQuery = `
@@ -630,7 +667,7 @@ export class Neo4jStorageProvider implements StorageProvider {
       }
 
       const timeTaken = Date.now() - startTime;
-      const graphResult: KnowledgeGraph = {
+      const graphResult: KnowledgeGraph<TEntity, TRelation> = {
         entities,
         relations,
         total: entities.length,
@@ -656,7 +693,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Open specific nodes by their exact names
    * @param names Array of node names to open
    */
-  async openNodes(names: string[]): Promise<KnowledgeGraph> {
+  async openNodes(names: string[]): Promise<KnowledgeGraph<TEntity, TRelation>> {
     try {
       const startTime = Date.now();
 
@@ -733,16 +770,14 @@ export class Neo4jStorageProvider implements StorageProvider {
    * @note Embeddings are generated asynchronously via job queue after entity creation
    *       to avoid blocking database transactions with slow API calls
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async createEntities(entities: any[]): Promise<any[]> {
+  async createEntities(entities: TEntity[]): Promise<TEntity[]> {
     try {
       if (!entities || entities.length === 0) {
         return [];
       }
 
       const session = await this.connectionManager.getSession();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const createdEntities: any[] = [];
+      const createdEntities: TEntity[] = [];
 
       try {
         // Begin transaction
@@ -800,6 +835,7 @@ export class Neo4jStorageProvider implements StorageProvider {
               // Step 3: Entity doesn't exist - create new entity
               const now = Date.now();
               const entityId = uuidv4();
+              const extendedEntity = entity as ExtendedEntity<TEntity>;
 
               const params = {
                 id: entityId,
@@ -807,11 +843,11 @@ export class Neo4jStorageProvider implements StorageProvider {
                 entityType: entity.entityType,
                 observations: JSON.stringify(entity.observations || []),
                 version: 1,
-                createdAt: entity.createdAt || now,
-                updatedAt: entity.updatedAt || now,
-                validFrom: entity.validFrom || now,
+                createdAt: extendedEntity.createdAt || now,
+                updatedAt: extendedEntity.updatedAt || now,
+                validFrom: extendedEntity.validFrom || now,
                 validTo: null,
-                changedBy: entity.changedBy || null,
+                changedBy: extendedEntity.changedBy || null,
               };
 
               const createQuery = `
@@ -867,14 +903,14 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Create new relations between entities
    * @param relations Array of relations to create
    */
-  async createRelations(relations: Relation[]): Promise<Relation[]> {
+  async createRelations(relations: TRelation[]): Promise<TRelation[]> {
     try {
       if (!relations || relations.length === 0) {
         return [];
       }
 
       const session = await this.connectionManager.getSession();
-      const createdRelations: Relation[] = [];
+      const createdRelations: TRelation[] = [];
 
       try {
         // Begin transaction
@@ -909,7 +945,7 @@ export class Neo4jStorageProvider implements StorageProvider {
             }
 
             // Create relation with parameters
-            const extendedRelation = relation as ExtendedRelation;
+            const extendedRelation = relation as ExtendedRelation<TRelation>;
             const params = {
               id: relationId,
               fromName: relation.from,
@@ -1321,8 +1357,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
           const entityRecord = entityResult.records[0];
           const deletedEntityCount = extractCount(entityRecord?.get('deletedEntityCount'));
-          const deletedEntityIds =
-            (entityRecord?.get('entityIds') as string[] | undefined) ?? [];
+          const deletedEntityIds = (entityRecord?.get('entityIds') as string[] | undefined) ?? [];
           const deletedEntityNames =
             (entityRecord?.get('deletedEntityNames') as string[] | undefined) ?? [];
 
@@ -1384,6 +1419,22 @@ export class Neo4jStorageProvider implements StorageProvider {
         await session.close();
       }
     } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code: string }).code === 'Neo.ClientError.Schema.ConstraintValidationFailed'
+      ) {
+        logger.warn(
+          'Neo4jStorageProvider: deleteEntities skipped because constraint already satisfied',
+          {
+            entityNames,
+            error,
+          }
+        );
+        return;
+      }
+
       logNeo4jStorageProviderError('delete entities', error, {
         entityNames,
       });
@@ -1468,7 +1519,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Soft-delete relations by updating their `validTo` timestamps (current graph stays intact).
    * @param relations Array of relations to mark as archived
    */
-  async deleteRelations(relations: Relation[]): Promise<void> {
+  async deleteRelations(relations: TRelation[]): Promise<void> {
     try {
       if (!relations || relations.length === 0) {
         return;
@@ -1654,8 +1705,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Get an entity by name
    * @param entityName Name of the entity to retrieve
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async getEntity(entityName: string): Promise<any | null> {
+  async getEntity(entityName: string): Promise<TEntity | null> {
     try {
       // Query for entity by name
       const query = `
@@ -1687,7 +1737,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Get entities that currently lack embeddings
    * @param limit Optional maximum number of results to return (defaults to 10)
    */
-  async getEntitiesWithoutEmbeddings(limit?: number): Promise<Entity[]> {
+  async getEntitiesWithoutEmbeddings(limit?: number): Promise<TEntity[]> {
     const safeLimit =
       typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
     const boundedLimit = Math.max(1, safeLimit);
@@ -1721,12 +1771,38 @@ export class Neo4jStorageProvider implements StorageProvider {
   }
 
   /**
+   * Count the number of entities that currently have embeddings.
+   */
+  async countEntitiesWithEmbeddings(): Promise<number> {
+    const session = await this.connectionManager.getSession();
+    try {
+      const query = `
+        MATCH (e:Entity)
+        WHERE e.embedding IS NOT NULL
+          AND e.validTo IS NULL
+        RETURN count(e) AS count
+      `;
+      const result = await session.run(query);
+      if (result.records.length === 0) {
+        return 0;
+      }
+
+      return extractCount(result.records[0].get('count'));
+    } catch (error) {
+      logNeo4jStorageProviderError('count entities with embeddings', error);
+      throw error;
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
    * Get a specific relation by its source, target, and type
    * @param from Source entity name
    * @param to Target entity name
    * @param type Relation type
    */
-  async getRelation(from: string, to: string, type: string): Promise<Relation | null> {
+  async getRelation(from: string, to: string, type: string): Promise<TRelation | null> {
     try {
       // Query for relation
       const query = `
@@ -1771,7 +1847,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Update an existing relation with new properties
    * @param relation The relation with updated properties
    */
-  async updateRelation(relation: Relation): Promise<void> {
+  async updateRelation(relation: TRelation): Promise<void> {
     try {
       const session = await this.connectionManager.getSession();
 
@@ -1860,7 +1936,7 @@ export class Neo4jStorageProvider implements StorageProvider {
             }]->(to)
           `;
 
-          const extendedRelation = relation as ExtendedRelation;
+          const extendedRelation = relation as ExtendedRelation<TRelation>;
           const createParams = {
             id: newRelationId,
             fromName: relation.from,
@@ -1903,8 +1979,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Get the history of all versions of an entity
    * @param entityName The name of the entity to retrieve history for
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async getEntityHistory(entityName: string): Promise<any[]> {
+  async getEntityHistory(entityName: string): Promise<TEntity[]> {
     try {
       // Query for entity history
       const query = `
@@ -1940,8 +2015,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * @param to Target entity name
    * @param relationType Type of the relation
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async getRelationHistory(from: string, to: string, relationType: string): Promise<any[]> {
+  async getRelationHistory(from: string, to: string, relationType: string): Promise<TRelation[]> {
     try {
       // Query for relation history
       const query = `
@@ -1985,7 +2059,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Get the state of the knowledge graph at a specific point in time
    * @param timestamp The timestamp to get the graph state at
    */
-  async getGraphAtTime(timestamp: number): Promise<KnowledgeGraph> {
+  async getGraphAtTime(timestamp: number): Promise<KnowledgeGraph<TEntity, TRelation>> {
     try {
       const startTime = Date.now();
 
@@ -2049,7 +2123,7 @@ export class Neo4jStorageProvider implements StorageProvider {
    * Get the current knowledge graph with confidence decay applied to relations
    * based on their age and the configured decay settings
    */
-  async getDecayedGraph(): Promise<KnowledgeGraph> {
+  async getDecayedGraph(): Promise<KnowledgeGraph<TEntity, TRelation>> {
     try {
       // If decay is not enabled, just return the regular graph
       if (!this.decayConfig.enabled) {
@@ -2095,7 +2169,7 @@ export class Neo4jStorageProvider implements StorageProvider {
 
         // Apply decay if confidence is present
         if (relation.confidence !== null && relation.confidence !== undefined) {
-          const extendedRelation = relation as ExtendedRelation;
+          const extendedRelation = relation as ExtendedRelation<TRelation>;
           const ageDiff =
             startTime - (extendedRelation.validFrom || extendedRelation.createdAt || startTime);
           let decayedConfidence = relation.confidence * Math.exp(decayFactor * ageDiff);
@@ -2224,10 +2298,12 @@ export class Neo4jStorageProvider implements StorageProvider {
         const embeddingVector = result.records[0].get('embedding');
 
         // Return the embedding in the expected format
+        const storedEntity = entity as ExtendedEntity<TEntity>;
+
         return {
           vector: embeddingVector,
           model: 'unknown', // We don't store the model info in Neo4j
-          lastUpdated: entity.updatedAt || Date.now(),
+          lastUpdated: storedEntity.updatedAt || Date.now(),
         };
       } finally {
         await session.close();
@@ -2245,8 +2321,10 @@ export class Neo4jStorageProvider implements StorageProvider {
    * @param queryVector The vector to compare against
    * @param limit Maximum number of results to return
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async findSimilarEntities(queryVector: number[], limit: number = 10): Promise<any[]> {
+  async findSimilarEntities(
+    queryVector: number[],
+    limit: number = 10
+  ): Promise<Array<TEntity & { score: number }>> {
     try {
       // Direct vector search implementation using the approach proven to work in our test script
       logger.debug(`Neo4jStorageProvider: Using direct vector search with ${limit} limit`);
@@ -2301,11 +2379,12 @@ export class Neo4jStorageProvider implements StorageProvider {
             };
           });
 
+          const scoredEntities = entities.filter(
+            (entity): entity is TEntity & { score: number } => entity.score !== undefined
+          );
+
           // Return entities sorted by score descending
-          return entities
-            .filter((entity) => entity.score !== undefined)
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
-            .slice(0, limit);
+          return scoredEntities.sort((a, b) => b.score - a.score).slice(0, limit);
         }
 
         logger.debug('Neo4jStorageProvider: No results from vector search');
@@ -2330,11 +2409,10 @@ export class Neo4jStorageProvider implements StorageProvider {
   async semanticSearch(
     query: string,
     options: SearchOptions & Neo4jSemanticSearchOptions = {}
-  ): Promise<KnowledgeGraphWithDiagnostics> {
+  ): Promise<KnowledgeGraphWithDiagnostics<TEntity, TRelation>> {
     try {
       // Create diagnostics object for debugging
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const diagnostics: Record<string, any> = {
+      const diagnostics: SemanticSearchDiagnostics = {
         query,
         startTime: Date.now(),
         stepsTaken: [],
@@ -2512,7 +2590,10 @@ export class Neo4jStorageProvider implements StorageProvider {
           diagnostics.totalTimeTaken = diagnostics.endTime - diagnostics.startTime;
 
           // Only include diagnostics if DEBUG is enabled
-          const result: KnowledgeGraphWithDiagnostics = { entities: [], relations: [] };
+          const result: KnowledgeGraphWithDiagnostics<TEntity, TRelation> = {
+            entities: [],
+            relations: [],
+          };
           if (process.env.DEBUG === 'true') {
             result.diagnostics = diagnostics;
           }
@@ -2621,10 +2702,8 @@ export class Neo4jStorageProvider implements StorageProvider {
       }
 
       // Check if we can access the diagnostic method
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (typeof (this.vectorStore as any).diagnosticGetEntityEmbeddings === 'function') {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await (this.vectorStore as any).diagnosticGetEntityEmbeddings();
+      if (typeof this.vectorStore.diagnosticGetEntityEmbeddings === 'function') {
+        return await this.vectorStore.diagnosticGetEntityEmbeddings();
       } else {
         return {
           error: 'Diagnostic method not available',

@@ -43,12 +43,16 @@ export class RetrievalPhase {
 
     for (let i = 0; i < questions.length; i++) {
       const question = questions[i];
-      console.log(`[Retrieval Phase] Processing question ${i + 1}/${questions.length}: ${question.id}`);
+      console.log(
+        `[Retrieval Phase] Processing question ${i + 1}/${questions.length}: ${question.id}`
+      );
 
       try {
         const result = await this.retrieveAnswer(question);
         results.push(result);
-        console.log(`[Retrieval Phase] ✓ Retrieved answer in ${(result.duration / 1000).toFixed(2)}s`);
+        console.log(
+          `[Retrieval Phase] ✓ Retrieved answer in ${(result.duration / 1000).toFixed(2)}s`
+        );
       } catch (error) {
         const errorMsg = (error as Error).message;
         results.push({
@@ -86,7 +90,10 @@ Please search the Memento knowledge graph for relevant information and provide a
     const response = await this.llmClient.prompt(SYSTEM_PROMPT, userPrompt, 600);
 
     // Step 2: Extract search query from LLM response
-    const searchQuery = this.extractSearchQuery(response.content);
+    let searchQuery = this.extractSearchQuery(response.content);
+    if (!searchQuery) {
+      searchQuery = question.question;
+    }
 
     // Step 3: Perform semantic search
     const searchResults = await this.mcpClient.semanticSearch(searchQuery, {
@@ -94,6 +101,21 @@ Please search the Memento knowledge graph for relevant information and provide a
       minSimilarity: 0.5,
       hybridSearch: true,
     });
+
+    // If early search returned nothing, retry using the original question text
+    const hasNoResults =
+      searchResults.entities.length === 0 && searchResults.relations.length === 0;
+    if (hasNoResults && searchQuery !== question.question) {
+      const fallbackResults = await this.mcpClient.semanticSearch(question.question, {
+        limit: 10,
+        minSimilarity: 0.5,
+        hybridSearch: true,
+      });
+      if (fallbackResults.entities.length > 0 || fallbackResults.relations.length > 0) {
+        searchResults.entities = fallbackResults.entities;
+        searchResults.relations = fallbackResults.relations;
+      }
+    }
 
     // Step 4: Ask LLM to synthesize answer based on search results
     const contextPrompt = `Based on the following information from the knowledge graph, answer this question:

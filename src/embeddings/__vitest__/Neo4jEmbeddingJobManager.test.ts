@@ -20,13 +20,14 @@ describe('Neo4jEmbeddingJobManager', () => {
   let mockEmbeddingService: jest.Mocked<EmbeddingService>;
   let mockStorageProvider: MockEmbeddingStorageProvider;
 
-  const mockEntity: Entity = {
-    name: 'TestEntity',
-    entityType: 'person',
-    observations: ['Test observation'],
-  };
+const mockEntity: Entity = {
+  name: 'TestEntity',
+  entityType: 'person',
+  observations: ['Test observation'],
+};
 
-  const mockEmbedding: number[] = [0.1, 0.2, 0.3];
+const mockEmbedding: number[] = [0.1, 0.2, 0.3];
+const defaultModelInfo = { name: 'test-model', dimensions: 1536 };
 
   beforeEach(() => {
     // Mock the job store
@@ -54,7 +55,7 @@ describe('Neo4jEmbeddingJobManager', () => {
     // Mock the embedding service
     mockEmbeddingService = {
       generateEmbedding: vi.fn(),
-      getModelInfo: vi.fn().mockReturnValue({ name: 'test-model' }),
+      getModelInfo: vi.fn().mockReturnValue(defaultModelInfo),
     } as any;
 
     // Mock the storage provider
@@ -444,6 +445,22 @@ describe('Neo4jEmbeddingJobManager', () => {
       }
 
       expect(jobManager.getHealthStatus().state).toBe('CRITICAL');
+    });
+  });
+
+  describe('public accessors', () => {
+    it('returns the embedding service instance', () => {
+      expect(jobManager.getEmbeddingService()).toBe(mockEmbeddingService);
+    });
+
+    it('returns the model info from the embedding service', () => {
+      const modelInfo = { name: 'override-model', dimensions: 768 };
+      mockEmbeddingService.getModelInfo.mockReturnValue(modelInfo);
+
+      const result = jobManager.getModelInfo();
+
+      expect(mockEmbeddingService.getModelInfo).toHaveBeenCalled();
+      expect(result).toEqual(modelInfo);
     });
   });
 });

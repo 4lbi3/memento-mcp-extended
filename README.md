@@ -799,6 +799,86 @@ Memento's adaptive search capabilities provide practical benefits:
 
 For example, when a user asks "What do you know about machine learning?", the system can retrieve conceptually related entities even if they don't explicitly mention "machine learning" - perhaps entities about neural networks, data science, or specific algorithms. But if semantic search yields insufficient results, the system automatically adjusts its approach to ensure useful information is still returned.
 
+## Type-Safe Storage APIs
+
+### Generic Storage Provider Usage
+
+`StorageProvider` now exposes generic parameters for entities and relations (`StorageProvider<TEntity extends Entity = Entity, TRelation extends Relation = Relation>`), so you can scope the behavior to your own domain types without losing the built-in contracts. For example:
+
+```ts
+interface PersonEntity extends Entity {
+  department: string;
+  favoriteTools?: string[];
+}
+
+const provider: StorageProvider<PersonEntity> = new FileStorageProvider<PersonEntity>();
+const graph: KnowledgeGraph<PersonEntity> = await provider.loadGraph();
+const created = await provider.createEntities([
+  {
+    name: 'alice',
+    entityType: 'person',
+    observations: ['Loves distributed systems'],
+    department: 'platform',
+  },
+]);
+```
+
+The generics flow through the rest of the stack (`KnowledgeGraphManager`, `KnowledgeGraph`, capability interfaces), so downstream code sees the richer shape without repeated casting.
+
+### Capability Interfaces
+
+- `EmbeddingCapableProvider` – implement this when the provider can persist/update entity embeddings, enumerate the missing ones, and report coverage; embedding jobs rely on these methods for scheduling and telemetry.
+- `VectorSearchCapableProvider` – use this when the backing store has optimized similarity search (e.g., Neo4j vectors) to unlock `findSimilarEntities()` and `semanticSearch()` with diagnostics.
+- `TemporalCapableProvider` – expose entity/relation history, point-in-time graphs, and the decayed confidence view whenever you need to answer “what did the graph look like yesterday?” or “show me how a relation evolved”.
+- `ConnectionCapableProvider` – available when there is a Neo4j connection manager you want to reuse; guards like `hasConnectionManager()` keep access safe and explicit.
+- `PurgeCapableProvider` – implement the purge helpers when your provider can safely delete archived versions after a cutoff, giving you an admin-facing maintenance path.
+
+Each capability lives in `src/storage/capabilities.ts` and provides lean runtime guards so optional behavior remains discoverable without casts.
+
+### Type Guard Usage
+
+Type guards pair with the capability interfaces to keep runtime access safe while preserving compile-time narrowing:
+
+```ts
+import {
+  hasConnectionManager,
+  hasEmbeddingCapability,
+  hasSemanticSearchCapabilities,
+} from './storage/capabilities.js';
+import type { StorageProvider } from './storage/StorageProvider.js';
+
+async function handleProvider(provider: StorageProvider): Promise<void> {
+  if (hasEmbeddingCapability(provider)) {
+    await provider.updateEntityEmbedding('alice', {
+      vector: await fetchEmbedding(),
+      model: 'text-embedding-3-small',
+      lastUpdated: Date.now(),
+    });
+  }
+
+  if (hasConnectionManager(provider)) {
+    const manager = provider.getConnectionManager();
+    await manager.verifyConnection();
+  }
+
+  if (hasSemanticSearchCapabilities(provider)) {
+    await provider.semanticSearch('memory tools', { limit: 5 });
+  }
+}
+```
+
+Additional guards (`hasVectorSearchCapability`, `hasTemporalCapability`, `hasPurgeCapability`) follow the same pattern, so you can compose them (`hasSemanticSearchCapabilities` combines embeddings + vector search) before calling optional APIs.
+
+## Migration Guide: Type-Safe APIs
+
+1. **Stop casting providers to `any`.** `StorageProvider` is now generically typed and the optional methods live on capability interfaces. Supply your entity/relation generics once and let TypeScript enforce the rest.
+2. **Replace private property access with capability guards.** Instead of `(storageProvider as any).connectionManager`, use `if (hasConnectionManager(storageProvider)) { storageProvider.getConnectionManager(); }`. The same applies to embedding helpers, temporal queries, and purging helpers.
+3. **Use the new public getters on services.** For example, call `embeddingJobManager.getEmbeddingService()` or `getModelInfo()` instead of reaching into internal fields; each getter is documented with `@public` and keeps the API explicit.
+4. **Implement capability interfaces when you extend storage backends.** If your provider exposes additional CRUD methods (embeddings, vector search, etc.), implement the corresponding interface so consumers can detect capabilities safely.
+5. **Review the developer guide for concrete examples.** `docs/detailed-project-analysis.md#type-guard-patterns` walks through the type guard patterns and explains when each guard should be used.
+
+Following these steps ensures your code stays compatible with the stricter, type-safe APIs introduced in 0.3.9.21.
+
 ## Troubleshooting
 
 ### Vector Search Diagnostics

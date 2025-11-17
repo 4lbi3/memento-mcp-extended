@@ -41,10 +41,15 @@ export class EvaluationPhase {
    * @param retrievalResults Array of retrieval results
    * @returns Array of evaluation results
    */
-  async run(questions: Question[], retrievalResults: RetrievalResult[]): Promise<EvaluationResult[]> {
+  async run(
+    questions: Question[],
+    retrievalResults: RetrievalResult[]
+  ): Promise<EvaluationResult[]> {
     const results: EvaluationResult[] = [];
 
-    console.log(`\n[Evaluation Phase] Starting evaluation of ${retrievalResults.length} answers...`);
+    console.log(
+      `\n[Evaluation Phase] Starting evaluation of ${retrievalResults.length} answers...`
+    );
 
     for (let i = 0; i < retrievalResults.length; i++) {
       const retrieval = retrievalResults[i];
@@ -55,7 +60,9 @@ export class EvaluationPhase {
         continue;
       }
 
-      console.log(`[Evaluation Phase] Evaluating ${i + 1}/${retrievalResults.length}: ${question.id}`);
+      console.log(
+        `[Evaluation Phase] Evaluating ${i + 1}/${retrievalResults.length}: ${question.id}`
+      );
 
       try {
         const result = await this.evaluateAnswer(question, retrieval);
