@@ -15,10 +15,14 @@ interface FileStorageProviderOptions {
  * @deprecated This storage provider is deprecated and will be removed in a future version.
  * Please migrate to SqliteStorageProvider.
  */
-export class FileStorageProvider implements StorageProvider {
+export class FileStorageProvider<
+  TEntity extends Entity = Entity,
+  TRelation extends Relation = Relation,
+> implements StorageProvider<TEntity, TRelation>
+{
   private _fs: typeof fs;
   private filePath: string;
-  private graph: KnowledgeGraph = { entities: [], relations: [] };
+  private graph: KnowledgeGraph<TEntity, TRelation> = { entities: [], relations: [] };
   private vectorStoreOptions?: VectorStoreFactoryOptions;
 
   /**
@@ -62,18 +66,21 @@ export class FileStorageProvider implements StorageProvider {
    * Load the entire knowledge graph from the file
    * @returns Promise resolving to the loaded KnowledgeGraph
    */
-  async loadGraph(): Promise<KnowledgeGraph> {
+  async loadGraph(): Promise<KnowledgeGraph<TEntity, TRelation>> {
     try {
       const content = await this._fs.promises.readFile(this.filePath, 'utf-8');
-      this.graph = JSON.parse(content);
+      this.graph = JSON.parse(content) as KnowledgeGraph<TEntity, TRelation>;
       return this.graph;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        // File doesn't exist, return empty graph
-        return { entities: [], relations: [] };
+    } catch (error) {
+      const fsError = error as NodeJS.ErrnoException;
+      if (fsError?.code === 'ENOENT') {
+        this.graph = { entities: [], relations: [] };
+        return this.graph;
       }
-      throw new Error(`Error loading graph from ${this.filePath}: ${error.message}`);
+
+      throw new Error(
+        `Error loading graph from ${this.filePath}: ${fsError?.message ?? String(error)}`
+      );
     }
   }
 
@@ -82,8 +89,9 @@ export class FileStorageProvider implements StorageProvider {
    * @param graph The KnowledgeGraph to save
    * @returns Promise that resolves when the save is complete
    */
-  async saveGraph(graph: KnowledgeGraph): Promise<void> {
+  async saveGraph(graph: KnowledgeGraph<TEntity, TRelation>): Promise<void> {
     await this._fs.promises.writeFile(this.filePath, JSON.stringify(graph, null, 2), 'utf-8');
+    this.graph = graph;
   }
 
   /**
@@ -92,7 +100,10 @@ export class FileStorageProvider implements StorageProvider {
    * @param options Optional search parameters
    * @returns Promise resolving to a KnowledgeGraph containing matching nodes
    */
-  async searchNodes(query: string, options?: SearchOptions): Promise<KnowledgeGraph> {
+  async searchNodes(
+    query: string,
+    options?: SearchOptions
+  ): Promise<KnowledgeGraph<TEntity, TRelation>> {
     // Load the entire graph
     const graph = await this.loadGraph();
 
@@ -149,7 +160,7 @@ export class FileStorageProvider implements StorageProvider {
    * @param names Array of node names to open
    * @returns Promise resolving to a KnowledgeGraph containing the specified nodes
    */
-  async openNodes(names: string[]): Promise<KnowledgeGraph> {
+  async openNodes(names: string[]): Promise<KnowledgeGraph<TEntity, TRelation>> {
     // Handle empty input array case
     if (names.length === 0) {
       return { entities: [], relations: [] };
@@ -183,14 +194,14 @@ export class FileStorageProvider implements StorageProvider {
    * @param limit Optional maximum number of entities to return
    * @returns Promise resolving to an array of entities missing embeddings
    */
-  async getEntitiesWithoutEmbeddings(limit?: number): Promise<Entity[]> {
+  async getEntitiesWithoutEmbeddings(limit?: number): Promise<TEntity[]> {
     const graph = await this.loadGraph();
     const normalizedLimit =
       typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
 
     const entitiesWithoutEmbeddings = graph.entities.filter((entity) => {
       const hasEmbedding = Boolean(entity.embedding);
-      const validTo = (entity as unknown as Record<string, unknown>).validTo;
+      const validTo = (entity as TEntity & { validTo?: number | null }).validTo;
       const isDeleted = validTo !== undefined && validTo !== null;
       return !hasEmbedding && !isDeleted;
     });
@@ -203,7 +214,7 @@ export class FileStorageProvider implements StorageProvider {
    * @param relations Array of relations to create
    * @returns Promise resolving to array of newly created relations
    */
-  async createRelations(relations: Relation[]): Promise<Relation[]> {
+  async createRelations(relations: TRelation[]): Promise<TRelation[]> {
     const graph = await this.loadGraph();
 
     const newRelations = relations.filter(
@@ -328,7 +339,7 @@ export class FileStorageProvider implements StorageProvider {
    * @returns Promise that resolves when deletion is complete
    * @deprecated FileStorageProvider is deprecated. Use SqliteStorageProvider instead.
    */
-  async deleteRelations(relations: Relation[]): Promise<void> {
+  async deleteRelations(relations: TRelation[]): Promise<void> {
     await this.loadGraph();
 
     for (const relation of relations) {
@@ -352,7 +363,7 @@ export class FileStorageProvider implements StorageProvider {
    * @param relationType Type of relation
    * @returns Promise resolving to the relation or null if not found
    */
-  async getRelation(from: string, to: string, relationType: string): Promise<Relation | null> {
+  async getRelation(from: string, to: string, relationType: string): Promise<TRelation | null> {
     const graph = await this.loadGraph();
 
     const relation = graph.relations.find(
@@ -368,7 +379,7 @@ export class FileStorageProvider implements StorageProvider {
    * @returns Promise that resolves when the update is complete
    * @throws Error if the relation doesn't exist
    */
-  async updateRelation(relation: Relation): Promise<void> {
+  async updateRelation(relation: TRelation): Promise<void> {
     const graph = await this.loadGraph();
 
     // Find the index of the relation to update
@@ -399,19 +410,16 @@ export class FileStorageProvider implements StorageProvider {
    * @returns Promise resolving to the array of created entities with timestamps
    * @deprecated FileStorageProvider is deprecated. Use SqliteStorageProvider instead.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async createEntities(entities: any[]): Promise<any[]> {
+  async createEntities(entities: TEntity[]): Promise<TEntity[]> {
     await this.loadGraph();
 
     const timestamp = Date.now();
-    const createdEntities = [];
+    const createdEntities: TEntity[] = [];
 
     for (const entity of entities) {
-      // Check if entity already exists
       const exists = this.graph.entities.some((e) => e.name === entity.name);
 
       if (!exists) {
-        // Add temporal metadata to match SqliteStorageProvider behavior
         const createdEntity = {
           ...entity,
           createdAt: timestamp,
@@ -420,17 +428,15 @@ export class FileStorageProvider implements StorageProvider {
           validTo: null,
           version: 1,
           changedBy: null,
-        };
+        } as TEntity;
 
         this.graph.entities.push(createdEntity);
         createdEntities.push(createdEntity);
       } else {
-        // Entity already exists, just return the original
         createdEntities.push(entity);
       }
     }
 
-    // Save the updated graph
     await this.saveGraph(this.graph);
 
     return createdEntities;
@@ -442,8 +448,7 @@ export class FileStorageProvider implements StorageProvider {
    * @returns Promise resolving to the entity or null if not found
    * @deprecated FileStorageProvider is deprecated. Use SqliteStorageProvider instead.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async getEntity(entityName: string): Promise<any | null> {
+  async getEntity(entityName: string): Promise<TEntity | null> {
     await this.loadGraph();
 
     const entity = this.graph.entities.find((e) => e.name === entityName);

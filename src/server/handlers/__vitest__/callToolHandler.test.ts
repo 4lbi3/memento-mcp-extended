@@ -4,6 +4,7 @@
  */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { handleCallToolRequest } from '../callToolHandler.js';
+import type { StorageProvider } from '../../../storage/StorageProvider.js';
 
 // Define types for the knowledge graph manager
 interface KnowledgeGraphManager {
@@ -18,6 +19,7 @@ interface KnowledgeGraphManager {
   updateRelation: ReturnType<typeof vi.fn>;
   searchNodes: ReturnType<typeof vi.fn>;
   openNodes: ReturnType<typeof vi.fn>;
+  getStorageProvider?: ReturnType<typeof vi.fn>;
   getEntityHistory?: ReturnType<typeof vi.fn>;
 }
 
@@ -45,6 +47,7 @@ describe('handleCallToolRequest', () => {
       updateRelation: vi.fn().mockResolvedValue(undefined),
       searchNodes: vi.fn().mockResolvedValue([]),
       openNodes: vi.fn().mockResolvedValue([]),
+      getStorageProvider: vi.fn().mockReturnValue(undefined),
     };
   });
 
@@ -76,6 +79,42 @@ describe('handleCallToolRequest', () => {
     await expect(handleCallToolRequest(request, mockKnowledgeGraphManager)).rejects.toThrow(
       'Unknown tool: unknown_tool'
     );
+  });
+
+  test('should return purge error when storage provider lacks capability', async () => {
+    const request = {
+      params: {
+        name: 'purge_archived_entities',
+        arguments: {
+          cutoffTimestamp: 1_500,
+        },
+      },
+    };
+
+    const result = await handleCallToolRequest(request, mockKnowledgeGraphManager);
+    expect(result.content[0].text).toContain('Storage provider does not support purge operations');
+  });
+
+  test('should call purge helpers when capability exists', async () => {
+    const purgeProvider = {
+      purgeArchivedEntities: vi.fn().mockResolvedValue(4),
+      purgeArchivedRelations: vi.fn().mockResolvedValue(2),
+    };
+    mockKnowledgeGraphManager.getStorageProvider = vi.fn().mockReturnValue(purgeProvider);
+
+    const request = {
+      params: {
+        name: 'purge_archived_entities',
+        arguments: {
+          cutoffTimestamp: 2_000,
+        },
+      },
+    };
+
+    const result = await handleCallToolRequest(request, mockKnowledgeGraphManager);
+    expect(purgeProvider.purgeArchivedEntities).toHaveBeenCalledWith(2000);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.purgedEntities).toBe(4);
   });
 
   test('should call readGraph and return formatted results for read_graph tool', async () => {

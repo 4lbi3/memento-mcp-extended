@@ -32,7 +32,11 @@ export function setupServer(knowledgeGraphManager: KnowledgeGraphManager): Serve
   // Register request handlers
   server.setRequestHandler(ListToolsRequestSchema, async (_request) => {
     try {
-      const result = await handleListToolsRequest();
+      const storageProvider =
+        typeof knowledgeGraphManager.getStorageProvider === 'function'
+          ? knowledgeGraphManager.getStorageProvider()
+          : undefined;
+      const result = await handleListToolsRequest(storageProvider);
       return result;
     } catch (error: unknown) {
       throw error;

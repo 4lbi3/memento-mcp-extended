@@ -26,7 +26,7 @@ export interface RelationMetadata {
 /**
  * Represents a relationship between two entities in the knowledge graph
  */
-export interface Relation {
+export interface Relation<TMetadata extends RelationMetadata = RelationMetadata> {
   /**
    * The source entity name (where the relation starts)
    */
@@ -58,30 +58,29 @@ export interface Relation {
   /**
    * Optional metadata providing additional context about the relation
    */
-  metadata?: RelationMetadata;
+  metadata?: TMetadata;
 }
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
 
 // Add static methods to the Relation interface for JavaScript tests
 // This allows tests to access validation methods directly from the interface
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Relation {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export function isRelation(obj: any): boolean {
+  export function isRelation(obj: unknown): obj is Relation {
     return RelationValidator.isRelation(obj);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export function hasStrength(obj: any): boolean {
+  export function hasStrength(obj: unknown): obj is Relation {
     return RelationValidator.hasStrength(obj);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export function hasConfidence(obj: any): boolean {
+  export function hasConfidence(obj: unknown): obj is Relation {
     return RelationValidator.hasConfidence(obj);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export function hasValidMetadata(obj: any): boolean {
+  export function hasValidMetadata(obj: unknown): boolean {
     return RelationValidator.hasValidMetadata(obj);
   }
 }
@@ -91,26 +90,27 @@ export class RelationValidator {
   /**
    * Validates if an object conforms to the Relation interface
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static isRelation(obj: any): boolean {
+  static isRelation(obj: unknown): obj is Relation {
+    if (!isPlainObject(obj)) {
+      return false;
+    }
+
+    const { from, to, relationType, strength, confidence, metadata } = obj as Partial<Relation>;
+
     return (
-      obj &&
-      typeof obj.from === 'string' &&
-      typeof obj.to === 'string' &&
-      typeof obj.relationType === 'string' &&
-      (obj.strength === undefined || obj.strength === null || typeof obj.strength === 'number') &&
-      (obj.confidence === undefined ||
-        obj.confidence === null ||
-        typeof obj.confidence === 'number') &&
-      (obj.metadata === undefined || typeof obj.metadata === 'object')
+      typeof from === 'string' &&
+      typeof to === 'string' &&
+      typeof relationType === 'string' &&
+      (strength === undefined || strength === null || typeof strength === 'number') &&
+      (confidence === undefined || confidence === null || typeof confidence === 'number') &&
+      (metadata === undefined || isPlainObject(metadata))
     );
   }
 
   /**
    * Checks if a relation has a strength value
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static hasStrength(obj: any): boolean {
+  static hasStrength(obj: unknown): obj is Relation {
     return (
       this.isRelation(obj) &&
       typeof obj.strength === 'number' &&
@@ -122,8 +122,7 @@ export class RelationValidator {
   /**
    * Checks if a relation has a confidence value
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static hasConfidence(obj: any): boolean {
+  static hasConfidence(obj: unknown): obj is Relation {
     return (
       this.isRelation(obj) &&
       typeof obj.confidence === 'number' &&
@@ -135,13 +134,16 @@ export class RelationValidator {
   /**
    * Checks if a relation has valid metadata
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static hasValidMetadata(obj: any): boolean {
+  static hasValidMetadata(obj: unknown): boolean {
     if (!this.isRelation(obj) || !obj.metadata) {
       return false;
     }
 
     const metadata = obj.metadata;
+
+    if (!isPlainObject(metadata)) {
+      return false;
+    }
 
     // Required fields
     if (typeof metadata.createdAt !== 'number' || typeof metadata.updatedAt !== 'number') {

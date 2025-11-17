@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { KnowledgeGraphManager, SemanticSearchOptions } from '../KnowledgeGraphManager.js';
+import type { Neo4jEmbeddingJobManager } from '../embeddings/Neo4jEmbeddingJobManager.js';
 import { StorageProvider } from '../storage/StorageProvider.js';
+import type { QueueStatus } from '../storage/neo4j/Neo4jJobStore.js';
 import type { LRUCache } from 'lru-cache';
 
 // Setup test paths
@@ -12,21 +14,7 @@ const testFilePath = path.join(__dirname, '../../test-output/test-memory.json');
 describe('KnowledgeGraphManager Search', () => {
   let manager: KnowledgeGraphManager;
   let mockStorageProvider: Partial<StorageProvider>;
-  let mockEmbeddingJobManager: {
-    embeddingService: {
-      generateEmbedding: (text: string) => Promise<number[]>;
-    };
-    scheduleEntityEmbedding: (entityName: string, priority?: number) => Promise<string>;
-    storageProvider: any;
-    rateLimiter: {
-      tokens: number;
-      lastRefill: number;
-      tokensPerInterval: number;
-      interval: number;
-    };
-    cache: any;
-    cacheOptions: { size: number; ttl: number };
-  };
+  let mockEmbeddingJobManager: Partial<Neo4jEmbeddingJobManager>;
 
   beforeEach(async () => {
     // Mock storage provider
@@ -56,24 +44,26 @@ describe('KnowledgeGraphManager Search', () => {
 
     // Mock embedding job manager
     mockEmbeddingJobManager = {
-      embeddingService: mockEmbeddingService,
-      scheduleEntityEmbedding: vi.fn().mockResolvedValue('mock-job-id'),
-      storageProvider: mockStorageProvider,
-      rateLimiter: {
-        tokens: 60,
-        lastRefill: Date.now(),
-        tokensPerInterval: 60,
-        interval: 60 * 1000,
+      scheduleEntityEmbedding: vi
+        .fn<Promise<string | null>, [string, number?]>()
+        .mockResolvedValue('mock-job-id'),
+      getEmbeddingService() {
+        return mockEmbeddingService;
       },
-      cache: {},
-      cacheOptions: { size: 1000, ttl: 3600000 },
+      getQueueStatus: vi.fn<Promise<QueueStatus>>().mockResolvedValue({
+        pending: 0,
+        processing: 0,
+        completed: 0,
+        failed: 0,
+        totalJobs: 0,
+      }),
     };
 
     // Create manager with mocks
     manager = new KnowledgeGraphManager({
       storageProvider: mockStorageProvider as StorageProvider,
       memoryFilePath: testFilePath,
-      embeddingJobManager: mockEmbeddingJobManager as any,
+      embeddingJobManager: mockEmbeddingJobManager as Neo4jEmbeddingJobManager,
     });
   });
 
@@ -214,5 +204,9 @@ describe('KnowledgeGraphManager Search', () => {
         queryVector: expect.any(Array),
       })
     );
+  });
+
+  it('exposes the storage provider via getStorageProvider', () => {
+    expect(manager.getStorageProvider()).toBe(mockStorageProvider);
   });
 });

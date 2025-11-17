@@ -1,10 +1,15 @@
+import type { StorageProvider } from '../../storage/StorageProvider.js';
+import { hasTemporalCapability, hasPurgeCapability } from '../../storage/capabilities.js';
+
 /**
  * Handles the ListTools request.
  * Returns a list of all available tools with their schemas.
  */
-export async function handleListToolsRequest(): Promise<{ tools: Array<Record<string, unknown>> }> {
+export async function handleListToolsRequest(
+  storageProvider?: StorageProvider
+): Promise<{ tools: Array<Record<string, unknown>> }> {
   // Define the base tools without the temporal-specific ones
-  const baseTools = [
+  const baseTools: Array<Record<string, unknown>> = [
     {
       name: 'create_entities',
       description: 'Create multiple new entities in your Memento MCP knowledge graph memory system',
@@ -406,7 +411,7 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
   ];
 
   // Define the temporal-specific tools
-  const temporalTools = [
+  const temporalTools: Array<Record<string, unknown>> = [
     {
       name: 'get_entity_history',
       description:
@@ -482,7 +487,50 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
   ];
 
   // Add debug tools only when DEBUG is enabled
-  const debugTools = [
+  const maintenanceTools: Array<Record<string, unknown>> = [
+    {
+      name: 'purge_archived_entities',
+      description:
+        'Permanently remove archived entity versions whose `validTo` predates the supplied cutoff timestamp',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cutoffTimestamp: {
+            type: 'number',
+            description:
+              'Cutoff timestamp (in milliseconds since epoch) for purging archived entities',
+          },
+          cutoff: {
+            type: 'number',
+            description: 'Alternative field name for the cutoff timestamp',
+          },
+        },
+        required: ['cutoffTimestamp'],
+      },
+    },
+    {
+      name: 'purge_archived_relations',
+      description:
+        'Permanently remove archived relation versions whose `validTo` predates the supplied cutoff timestamp',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cutoffTimestamp: {
+            type: 'number',
+            description:
+              'Cutoff timestamp (in milliseconds since epoch) for purging archived relations',
+          },
+          cutoff: {
+            type: 'number',
+            description: 'Alternative field name for the cutoff timestamp',
+          },
+        },
+        required: ['cutoffTimestamp'],
+      },
+    },
+  ];
+
+  const debugTools: Array<Record<string, unknown>> = [
     {
       name: 'force_generate_embedding',
       description:
@@ -536,8 +584,22 @@ export async function handleListToolsRequest(): Promise<{ tools: Array<Record<st
     },
   ];
 
-  // Return the list of tools with debug tools conditionally included
-  return {
-    tools: [...baseTools, ...temporalTools, ...(process.env.DEBUG === 'true' ? debugTools : [])],
-  };
+  const tools = [...baseTools];
+  const hasTemporal = storageProvider ? hasTemporalCapability(storageProvider) : false;
+  const hasPurge = storageProvider ? hasPurgeCapability(storageProvider) : false;
+
+  if (hasTemporal) {
+    tools.push(...temporalTools);
+  }
+
+  if (hasPurge) {
+    tools.push(...maintenanceTools);
+  }
+
+  if (process.env.DEBUG === 'true') {
+    tools.push(...debugTools);
+  }
+
+  // Return the list of tools with supported capabilities
+  return { tools };
 }

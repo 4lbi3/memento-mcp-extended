@@ -1,26 +1,11 @@
 import type { KnowledgeGraphManager } from '../KnowledgeGraphManager.js';
+import type { StorageProvider } from '../storage/StorageProvider.js';
+import { hasConnectionManager, hasEmbeddingCapability } from '../storage/capabilities.js';
 
-type EmbeddingServiceDiagnostics = {
-  getModelInfo?: () => unknown;
-  getProviderInfo?: () => unknown;
-};
-
-type EmbeddingJobManagerDiagnostics = {
-  embeddingService?: EmbeddingServiceDiagnostics;
-  getPendingJobs?: () => unknown[] | { length: number };
-};
-
-type StorageProviderDiagnostics = {
-  getConnectionManager?: () => unknown;
-  vectorStore?: unknown;
-  countEntitiesWithEmbeddings?: () => Promise<number>;
-  embeddingService?: EmbeddingServiceDiagnostics;
-};
-
-type KnowledgeGraphManagerDiagnostics = {
-  storageProvider?: StorageProviderDiagnostics;
-  embeddingJobManager?: EmbeddingJobManagerDiagnostics;
-  [key: string]: unknown;
+type StorageProviderWithEmbeddingService = StorageProvider & {
+  embeddingService?: {
+    getProviderInfo?: () => unknown;
+  };
 };
 
 export type DebugEmbeddingConfigInfo = {
@@ -57,16 +42,15 @@ export type DebugEmbeddingConfigInfo = {
 export async function gatherDebugEmbeddingConfig(
   knowledgeGraphManager: KnowledgeGraphManager
 ): Promise<DebugEmbeddingConfigInfo> {
-  const kgm = knowledgeGraphManager as unknown as KnowledgeGraphManagerDiagnostics;
-
   const storageType = process.env.MEMORY_STORAGE_TYPE || 'neo4j';
   const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
   const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
 
-  const storageProvider = kgm.storageProvider;
-  const embeddingJobManager = kgm.embeddingJobManager;
+  const storageProvider = knowledgeGraphManager.getStorageProvider();
+  const embeddingJobManager = knowledgeGraphManager.getEmbeddingJobManager();
   const hasEmbeddingJobManager = !!embeddingJobManager;
 
+  const providerWithVectorStore = storageProvider as { vectorStore?: unknown } | undefined;
   const neo4jInfo = {
     uri: process.env.NEO4J_URI || 'default',
     username: process.env.NEO4J_USERNAME ? 'configured' : 'not configured',
@@ -75,15 +59,17 @@ export async function gatherDebugEmbeddingConfig(
     vectorDimensions: process.env.NEO4J_VECTOR_DIMENSIONS || '1536',
     similarityFunction: process.env.NEO4J_SIMILARITY_FUNCTION || 'cosine',
     connectionStatus: 'unknown',
-    vectorStoreStatus: undefined as string | undefined,
+    vectorStoreStatus: 'unknown',
   };
 
-  if (storageProvider?.getConnectionManager) {
+  if (storageProvider && hasConnectionManager(storageProvider)) {
     try {
       const connectionManager = storageProvider.getConnectionManager();
       if (connectionManager) {
         neo4jInfo.connectionStatus = 'available';
-        neo4jInfo.vectorStoreStatus = storageProvider.vectorStore ? 'available' : 'not initialized';
+        neo4jInfo.vectorStoreStatus = providerWithVectorStore?.vectorStore
+          ? 'available'
+          : 'not initialized';
       }
     } catch (error: Error | unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -92,7 +78,7 @@ export async function gatherDebugEmbeddingConfig(
   }
 
   let entitiesWithEmbeddings = 0;
-  if (storageProvider?.countEntitiesWithEmbeddings) {
+  if (storageProvider && hasEmbeddingCapability(storageProvider)) {
     try {
       entitiesWithEmbeddings = await storageProvider.countEntitiesWithEmbeddings();
     } catch (error) {
@@ -101,9 +87,9 @@ export async function gatherDebugEmbeddingConfig(
   }
 
   let embeddingServiceInfo: unknown = null;
-  const managerService = embeddingJobManager?.embeddingService;
-  if (hasEmbeddingJobManager && managerService?.getModelInfo) {
+  if (hasEmbeddingJobManager) {
     try {
+      const managerService = embeddingJobManager.getEmbeddingService();
       embeddingServiceInfo = managerService.getModelInfo();
     } catch (error: Error | unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -112,24 +98,30 @@ export async function gatherDebugEmbeddingConfig(
   }
 
   let embeddingProviderInfo: unknown = null;
-  if (storageProvider?.embeddingService?.getProviderInfo) {
+  if (hasEmbeddingJobManager) {
     try {
-      embeddingProviderInfo = storageProvider.embeddingService.getProviderInfo();
+      embeddingProviderInfo = embeddingJobManager.getEmbeddingService().getProviderInfo();
     } catch (error: Error | unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[ERROR] Error getting embedding provider info: ${errorMessage}\n`);
     }
+  } else if (storageProvider) {
+    const providerWithEmbeddingService = storageProvider as StorageProviderWithEmbeddingService;
+    if (providerWithEmbeddingService.embeddingService?.getProviderInfo) {
+      try {
+        embeddingProviderInfo = providerWithEmbeddingService.embeddingService.getProviderInfo();
+      } catch (error: Error | unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[ERROR] Error getting embedding provider info: ${errorMessage}\n`);
+      }
+    }
   }
 
   let pendingJobs = 0;
-  if (hasEmbeddingJobManager && embeddingJobManager?.getPendingJobs) {
+  if (hasEmbeddingJobManager) {
     try {
-      const jobs = embeddingJobManager.getPendingJobs();
-      if (Array.isArray(jobs)) {
-        pendingJobs = jobs.length;
-      } else if (jobs && typeof jobs.length === 'number') {
-        pendingJobs = jobs.length;
-      }
+      const queueStatus = await embeddingJobManager.getQueueStatus();
+      pendingJobs = queueStatus.pending;
     } catch (error: Error | unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[ERROR] Error getting pending jobs: ${errorMessage}\n`);

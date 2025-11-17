@@ -2,7 +2,7 @@
  * LLM Client with rate limiting and retry logic
  * Supports Gemini and Gemma models
  */
-import axios, { AxiosError } from 'axios';
+import axios, { type AxiosError } from 'axios';
 import type { ModelConfig } from '../types.js';
 import { RateLimiter } from './RateLimiter.js';
 
@@ -145,7 +145,8 @@ export class LLMClient {
         response.data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
 
       // Estimate token usage (Gemini API doesn't always return token count)
-      const tokensUsed = response.data?.usageMetadata?.totalTokenCount || this.estimateTokens(content);
+      const tokensUsed =
+        response.data?.usageMetadata?.totalTokenCount || this.estimateTokens(content);
 
       return {
         content,
@@ -208,7 +209,7 @@ export class LLMClient {
   /**
    * Get rate limiter status
    */
-  getRateLimitStatus() {
+  getRateLimitStatus(): ReturnType<RateLimiter['getStatus']> {
     return this.rateLimiter.getStatus();
   }
 
