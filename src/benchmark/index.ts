@@ -11,9 +11,15 @@ import { initializeStorageProvider } from '../config/storage.js';
 import { EmbeddingServiceFactory } from '../embeddings/EmbeddingServiceFactory.js';
 import { Neo4jJobStore } from '../storage/neo4j/Neo4jJobStore.js';
 import { Neo4jEmbeddingJobManager } from '../embeddings/Neo4jEmbeddingJobManager.js';
-import { createJobDatabaseConnectionManager } from '../storage/neo4j/Neo4jConnectionManager.js';
+import {
+  createJobDatabaseConnectionManager,
+  Neo4jConnectionManager,
+} from '../storage/neo4j/Neo4jConnectionManager.js';
 import { DEFAULT_NEO4J_CONFIG } from '../storage/neo4j/Neo4jConfig.js';
 import { logger } from '../utils/logger.js';
+import type { StorageProvider } from '../storage/StorageProvider.js';
+import type { VectorStoreFactoryOptions } from '../storage/VectorStoreFactory.js';
+import { hasConnectionManager, hasEmbeddingCapability } from '../storage/capabilities.js';
 import { loadConfig, getDataFilePath } from './config.js';
 import { getModelConfig, validateCycleCapacity } from './llm/models.js';
 import { LLMClient } from './llm/LLMClient.js';
@@ -22,13 +28,67 @@ import { IngestPhase } from './phases/IngestPhase.js';
 import { RetrievalPhase } from './phases/RetrievalPhase.js';
 import { EvaluationPhase } from './phases/EvaluationPhase.js';
 import { ReportGenerator } from './report/ReportGenerator.js';
-import type { Fact, Question, BenchmarkReport } from './types.js';
+import type { Fact, Question, BenchmarkReport, BenchmarkConfig } from './types.js';
 
-async function main() {
+const DEFAULT_BENCHMARK_DB_PREFIX = process.env.BENCHMARK_NEO4J_DATABASE_PREFIX || 'benchmark';
+
+function sanitizeDatabaseName(rawName: string, prefix: string): string {
+  const sanitized = rawName.replace(/[^0-9A-Za-z]/g, '');
+  if (sanitized.length > 0) {
+    return sanitized;
+  }
+
+  return `${prefix}${Date.now()}`;
+}
+
+async function createBenchmarkDatabase(config: BenchmarkConfig): Promise<{
+  manager: Neo4jConnectionManager;
+  database: string;
+}> {
+  const rawName =
+    process.env.BENCHMARK_NEO4J_DATABASE || `${DEFAULT_BENCHMARK_DB_PREFIX}_${Date.now()}`;
+  const databaseName = sanitizeDatabaseName(rawName, DEFAULT_BENCHMARK_DB_PREFIX);
+
+  const systemManager = new Neo4jConnectionManager({
+    uri: config.mcp.neo4jUri,
+    username: config.mcp.neo4jUsername,
+    password: config.mcp.neo4jPassword,
+    database: 'system',
+  });
+
+  try {
+    logger.info('Creating isolated benchmark database', { database: databaseName });
+    await systemManager.executeQuery(`CREATE DATABASE ${databaseName} IF NOT EXISTS WAIT`, {});
+    return { manager: systemManager, database: databaseName };
+  } catch (error) {
+    await systemManager.close();
+    throw error;
+  }
+}
+
+async function dropBenchmarkDatabase(
+  manager: Neo4jConnectionManager,
+  databaseName: string
+): Promise<void> {
+  try {
+    logger.info('Dropping isolated benchmark database', { database: databaseName });
+    await manager.executeQuery(`DROP DATABASE ${databaseName} IF EXISTS WAIT`, {});
+  } catch (error) {
+    logger.warn('Failed to drop benchmark database', { database: databaseName, error });
+  } finally {
+    await manager.close();
+  }
+}
+
+async function main(): Promise<void> {
   console.log('╔═══════════════════════════════════════════════════════════════╗');
   console.log('║       Memento MCP Benchmark - Automated Evaluation           ║');
   console.log('╚═══════════════════════════════════════════════════════════════╝');
   console.log('');
+
+  let exitCode = 0;
+  let benchmarkSystemManager: Neo4jConnectionManager | undefined;
+  let benchmarkDatabaseName: string | undefined;
 
   try {
     // Step 1: Load configuration
@@ -63,15 +123,22 @@ async function main() {
     if (config.mcp.neo4jUri) process.env.NEO4J_URI = config.mcp.neo4jUri;
     if (config.mcp.neo4jUsername) process.env.NEO4J_USERNAME = config.mcp.neo4jUsername;
     if (config.mcp.neo4jPassword) process.env.NEO4J_PASSWORD = config.mcp.neo4jPassword;
-    if (config.mcp.neo4jDatabase) process.env.NEO4J_DATABASE = config.mcp.neo4jDatabase;
+
+    const benchmarkDb = await createBenchmarkDatabase(config);
+    benchmarkSystemManager = benchmarkDb.manager;
+    benchmarkDatabaseName = benchmarkDb.database;
+    process.env.NEO4J_DATABASE = benchmarkDatabaseName;
+    console.log(`✓ Using isolated Neo4j database: ${benchmarkDatabaseName}`);
 
     const storageProvider = initializeStorageProvider();
     const embeddingService = EmbeddingServiceFactory.createFromEnvironment();
 
     // Initialize embedding job manager
     const neo4jConfig = DEFAULT_NEO4J_CONFIG;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const entityConnectionManager = (storageProvider as any).connectionManager;
+    if (!hasConnectionManager(storageProvider)) {
+      throw new Error('Neo4j storage provider does not have a connection manager');
+    }
+
     const jobConnectionManager = createJobDatabaseConnectionManager(neo4jConfig);
     const jobStore = new Neo4jJobStore(jobConnectionManager, true);
 
@@ -84,18 +151,32 @@ async function main() {
         const result = await storageProvider.openNodes([name]);
         return result.entities[0] || null;
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      storeEntityVector: async (name: string, embedding: any) => {
-        const formattedEmbedding = {
-          vector: embedding.vector || embedding,
-          model: embedding.model || 'unknown',
-          lastUpdated: embedding.lastUpdated || Date.now(),
-        };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (typeof (storageProvider as any).updateEntityEmbedding === 'function') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return await (storageProvider as any).updateEntityEmbedding(name, formattedEmbedding);
+      storeEntityVector: async (
+        name: string,
+        embedding: { vector?: number[]; model?: string; lastUpdated?: number } | number[]
+      ) => {
+        let vectorValue: number[] = [];
+
+        if (
+          typeof embedding === 'object' &&
+          'vector' in embedding &&
+          Array.isArray(embedding.vector)
+        ) {
+          vectorValue = embedding.vector;
+        } else if (Array.isArray(embedding)) {
+          vectorValue = embedding;
         }
+
+        const formattedEmbedding = {
+          vector: vectorValue,
+          model: (embedding as { model?: string }).model || 'unknown',
+          lastUpdated: (embedding as { lastUpdated?: number }).lastUpdated || Date.now(),
+        };
+
+        if (hasEmbeddingCapability(storageProvider)) {
+          return await storageProvider.updateEntityEmbedding(name, formattedEmbedding);
+        }
+
         throw new Error('updateEntityEmbedding not implemented');
       },
     };
@@ -112,8 +193,11 @@ async function main() {
     const knowledgeGraphManager = new KnowledgeGraphManager({
       storageProvider,
       embeddingJobManager,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vectorStoreOptions: (storageProvider as any).vectorStoreOptions,
+      vectorStoreOptions: (
+        storageProvider as {
+          vectorStoreOptions?: VectorStoreFactoryOptions;
+        }
+      ).vectorStoreOptions,
     });
 
     console.log('✓ Memento MCP system initialized');
@@ -204,7 +288,7 @@ async function main() {
     const { mkdirSync } = await import('fs');
     try {
       mkdirSync(outputDir, { recursive: true });
-    } catch (e) {
+    } catch {
       // Directory might already exist
     }
 
@@ -219,17 +303,19 @@ async function main() {
 
     // Cleanup
     await jobStore.close();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (typeof (storageProvider as any).close === 'function') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (storageProvider as any).close();
+    const closableProvider = storageProvider as StorageProvider & { close?: () => Promise<void> };
+    if (typeof closableProvider.close === 'function') {
+      await closableProvider.close();
     }
-
-    process.exit(0);
   } catch (error) {
+    exitCode = 1;
     console.error('\n❌ Benchmark failed:', error);
     console.error((error as Error).stack);
-    process.exit(1);
+  } finally {
+    if (benchmarkSystemManager && benchmarkDatabaseName) {
+      await dropBenchmarkDatabase(benchmarkSystemManager, benchmarkDatabaseName);
+    }
+    process.exit(exitCode);
   }
 }
 
@@ -262,8 +348,7 @@ async function waitForEmbeddings(
     totalProcessed += result.processed || 0;
 
     console.log(
-      `  Embedding progress: ${totalProcessed} jobs processed (${result.successful} successful, ${result.failed} failed) `
-        + `- pending ${queueStatus.pending}, processing ${queueStatus.processing}`
+      `  Embedding progress: ${totalProcessed} jobs processed (${result.successful} successful, ${result.failed} failed) - pending ${queueStatus.pending}, processing ${queueStatus.processing}`
     );
 
     // If we've processed at least as many jobs as entities, we're likely done

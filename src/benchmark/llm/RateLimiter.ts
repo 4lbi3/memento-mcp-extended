@@ -48,16 +48,14 @@ export class RateLimiter {
 
       // Check RPM limit
       if (this.state.requestsInCurrentMinute >= this.config.rpm) {
-        const msUntilMinuteReset =
-          this.MS_PER_MINUTE - (Date.now() - this.state.minuteWindowStart);
+        const msUntilMinuteReset = this.MS_PER_MINUTE - (Date.now() - this.state.minuteWindowStart);
         await this.sleep(msUntilMinuteReset + 100); // Add 100ms buffer
         continue;
       }
 
       // Check TPM limit
       if (this.state.tokensInCurrentMinute + estimatedTokens > this.config.tpm) {
-        const msUntilMinuteReset =
-          this.MS_PER_MINUTE - (Date.now() - this.state.minuteWindowStart);
+        const msUntilMinuteReset = this.MS_PER_MINUTE - (Date.now() - this.state.minuteWindowStart);
         await this.sleep(msUntilMinuteReset + 100); // Add 100ms buffer
         continue;
       }

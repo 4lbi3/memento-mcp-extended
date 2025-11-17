@@ -69,13 +69,17 @@ export class IngestPhase {
     const batchSize = 3;
     for (let i = 0; i < facts.length; i += batchSize) {
       const batch = facts.slice(i, i + batchSize);
-      console.log(`[Ingest Phase] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(facts.length / batchSize)}...`);
+      console.log(
+        `[Ingest Phase] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(facts.length / batchSize)}...`
+      );
 
       for (const fact of batch) {
         try {
           await this.processFact(fact, result);
           result.factsProcessed++;
-          console.log(`[Ingest Phase] ✓ Processed fact ${result.factsProcessed}/${facts.length}: ${fact.id}`);
+          console.log(
+            `[Ingest Phase] ✓ Processed fact ${result.factsProcessed}/${facts.length}: ${fact.id}`
+          );
         } catch (error) {
           const errorMsg = `Failed to process fact ${fact.id}: ${(error as Error).message}`;
           result.errors.push(errorMsg);
@@ -91,7 +95,9 @@ export class IngestPhase {
 
     result.duration = Date.now() - startTime;
     console.log(`[Ingest Phase] Completed in ${(result.duration / 1000).toFixed(2)}s`);
-    console.log(`[Ingest Phase] Stats: ${result.entitiesCreated} entities, ${result.relationsCreated} relations, ${result.observationsAdded} observations`);
+    console.log(
+      `[Ingest Phase] Stats: ${result.entitiesCreated} entities, ${result.relationsCreated} relations, ${result.observationsAdded} observations`
+    );
 
     return result;
   }

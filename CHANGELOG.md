@@ -5,6 +5,22 @@ All notable changes to Memento MCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9.21] - 2025-11-17
+
+### Added
+
+- Documented the new type-safe storage APIs, capability interfaces, type guard patterns, and migration guidance in the README and developer analysis guide.
+
+### Changed
+
+- `StorageProvider` now uses defaulted generics (`<TEntity extends Entity = Entity, TRelation extends Relation = Relation>`) and delegates optional behavior (embeddings, vector search, temporal history, purging, connection access) to capability interfaces in `src/storage/capabilities.ts`, which are paired with `has*` type guards.
+- The embedding job and connection helpers now expose public getters (`getEmbeddingService`, `getModelInfo`, `getConnectionManager`) so callers can rely on typed APIs instead of accessing internal fields.
+
+### Breaking
+
+- Callers must stop casting providers to `any` and, when consuming optional behavior, switch to the capability interfaces via the provided type guards (`hasEmbeddingCapability`, `hasVectorSearchCapability`, `hasTemporalCapability`, `hasPurgeCapability`, `hasConnectionManager`, and `hasSemanticSearchCapabilities`).
+- Storage provider implementations that expose embeddings, vector search, temporal queries, purge helpers, or connection managers must now implement the corresponding capability interface so the rest of the codebase can safely narrow those features.
+
 ## [0.3.9.20] - 2025-11-16
 
 ### Added
@@ -331,3 +347,4 @@ The Neo4j implementation (Neo4jEmbeddingJobManager) is now the authoritative emb
 - Project initialization
 - Basic MCP server framework
 - Core interfaces and types
+## [0.3.9.20] - 2025-11-16
