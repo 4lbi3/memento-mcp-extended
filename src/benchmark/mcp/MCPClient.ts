@@ -70,7 +70,12 @@ export class MCPClient {
   /**
    * Add observations to existing entities
    */
-  async addObservations(observations: Array<{ entityName: string; contents: string[] }>): Promise<void> {
+  async addObservations(
+    observations: Array<{
+      entityName: string;
+      contents: string[];
+    }>
+  ): Promise<void> {
     const startTime = Date.now();
     try {
       await this.knowledgeGraphManager.addObservations(observations);
@@ -124,12 +129,7 @@ export class MCPClient {
       };
 
       const result = await this.knowledgeGraphManager.search(query, searchOptions);
-      this.recordToolCall(
-        'semantic_search',
-        { query, ...options },
-        Date.now() - startTime,
-        true
-      );
+      this.recordToolCall('semantic_search', { query, ...options }, Date.now() - startTime, true);
       return result;
     } catch (error) {
       this.recordToolCall(

@@ -15,7 +15,8 @@ export const MODELS: Record<string, ModelConfig> = {
   },
   'gemma-3': {
     name: 'gemma-3',
-    apiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemma-2-9b-it:generateContent',
+    apiEndpoint:
+      'https://generativelanguage.googleapis.com/v1beta/models/gemma-2-9b-it:generateContent',
     rpm: 30, // Requests Per Minute
     tpm: 15000, // Tokens Per Minute
     rpd: 14400, // Requests Per Day

@@ -13,9 +13,19 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 
 // Mock KnowledgeGraphManager
 vi.mock('../KnowledgeGraphManager.js', () => {
-  const MockKnowledgeGraphManager = vi.fn();
+  class MockKnowledgeGraphManager {
+    getStorageProvider() {
+      return {};
+    }
+
+    getEmbeddingJobManager() {
+      return undefined;
+    }
+  }
+
+  const KnowledgeGraphManager = vi.fn().mockImplementation(() => new MockKnowledgeGraphManager());
   return {
-    KnowledgeGraphManager: MockKnowledgeGraphManager,
+    KnowledgeGraphManager,
   };
 });
 
@@ -52,13 +62,13 @@ beforeEach(() => {
   // Set a valid EMBED_JOB_RETENTION_DAYS for testing (required for startup validation)
   process.env.EMBED_JOB_RETENTION_DAYS = '14';
 
-  // Reset all mocks
-  vi.resetAllMocks();
+  // Reset mock calls and modules while preserving implementations
+  vi.clearAllMocks();
   vi.resetModules();
 });
 
 afterEach(() => {
-  vi.resetAllMocks();
+  vi.clearAllMocks();
   vi.resetModules();
 });
 
@@ -118,8 +128,10 @@ describe('Memory Server Main Function', () => {
     };
 
     // Set mock implementation for this test
-    (StdioServerTransport as any).mockReturnValue(mockTransport);
-    (setupServer as any).mockReturnValue(mockServer);
+    const mockedTransport = vi.mocked(StdioServerTransport);
+    mockedTransport.mockReturnValue(mockTransport);
+    const mockedSetupServer = vi.mocked(setupServer);
+    mockedSetupServer.mockReturnValue(mockServer);
 
     // Save current environment
     const originalNodeEnv = process.env.NODE_ENV;
@@ -155,11 +167,14 @@ describe('Memory Server Main Function', () => {
     };
 
     // Set mock implementation for this test
-    (setupServer as any).mockReturnValue(mockServer);
+    const mockedSetupServer = vi.mocked(setupServer);
+    mockedSetupServer.mockReturnValue(mockServer);
 
     // Spy on console.error and process.exit
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const processExitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    const processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      return undefined as never;
+    });
 
     // Import the module with all dependencies mocked
     const indexModule = await import('../index.js');
@@ -196,13 +211,19 @@ describe('Memory Server Main Function', () => {
 
     // Create mock values
     const mockStorageProvider = { id: 'mock-storage' };
-    const mockKnowledgeGraphManager = { id: 'mock-manager' };
+    const mockKnowledgeGraphManagerInstance = { id: 'mock-manager' };
     const mockServer = { id: 'mock-server' };
 
+    mockKnowledgeGraphManagerInstance.getStorageProvider = vi.fn(() => mockStorageProvider);
+    mockKnowledgeGraphManagerInstance.getEmbeddingJobManager = vi.fn(() => undefined);
+
     // Set mock implementations for this test
-    (initializeStorageProvider as any).mockReturnValue(mockStorageProvider);
-    (KnowledgeGraphManager as any).mockReturnValue(mockKnowledgeGraphManager);
-    (setupServer as any).mockReturnValue(mockServer);
+    const mockedInitializeStorageProvider = vi.mocked(initializeStorageProvider);
+    mockedInitializeStorageProvider.mockReturnValue(mockStorageProvider);
+    const mockedKnowledgeGraphManager = vi.mocked(KnowledgeGraphManager);
+    mockedKnowledgeGraphManager.mockReturnValue(mockKnowledgeGraphManagerInstance);
+    const mockedSetupServer = vi.mocked(setupServer);
+    mockedSetupServer.mockReturnValue(mockServer);
 
     // Import index to trigger initialization
     await import('../index.js');
@@ -215,7 +236,7 @@ describe('Memory Server Main Function', () => {
         storageProvider: mockStorageProvider,
       })
     );
-    expect(setupServer).toHaveBeenCalledWith(mockKnowledgeGraphManager);
+    expect(setupServer).toHaveBeenCalledWith(mockKnowledgeGraphManagerInstance);
   });
 
   test('fails fast when EMBED_JOB_RETENTION_DAYS is not set', async () => {

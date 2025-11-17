@@ -14,6 +14,10 @@ import { logger } from './utils/logger.js';
 import { runRecurringTask } from './utils/runRecurringTask.js';
 import { DEFAULT_RETRY_POLICY, type RetryPolicy } from './utils/retry.js';
 import { startHealthServer } from './server/health.js';
+import type { StorageProvider } from './storage/StorageProvider.js';
+import type { VectorStoreFactoryOptions } from './storage/VectorStoreFactory.js';
+import type { EntityEmbedding } from './types/entity-embedding.js';
+import { hasConnectionManager, hasEmbeddingCapability } from './storage/capabilities.js';
 
 // Re-export the types and classes for use in other modules
 export * from './KnowledgeGraphManager.js';
@@ -46,6 +50,70 @@ const JOB_RETRY_POLICY: RetryPolicy = {
     DEFAULT_RETRY_POLICY.jitterFactor
   ),
 };
+
+type EmbeddingPayload = {
+  vector?: number[];
+  model?: string;
+  lastUpdated?: number;
+  [key: string]: unknown;
+};
+
+type EmbeddingInput = EntityEmbedding | number[] | EmbeddingPayload;
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isEntityEmbedding = (value: unknown): value is EntityEmbedding =>
+  isPlainObject(value) &&
+  Array.isArray(value.vector) &&
+  typeof value.model === 'string' &&
+  typeof value.lastUpdated === 'number';
+
+const normalizeEmbeddingInput = (input: EmbeddingInput): EntityEmbedding => {
+  if (isEntityEmbedding(input)) {
+    return input;
+  }
+
+  if (Array.isArray(input)) {
+    return {
+      vector: input,
+      model: 'unknown',
+      lastUpdated: Date.now(),
+    };
+  }
+
+  if (isPlainObject(input) && Array.isArray(input.vector)) {
+    return {
+      vector: input.vector,
+      model: typeof input.model === 'string' ? input.model : 'unknown',
+      lastUpdated: typeof input.lastUpdated === 'number' ? input.lastUpdated : Date.now(),
+    };
+  }
+
+  throw new Error('Embedding payload must include a vector array');
+};
+
+const describeEmbeddingInput = (
+  input: EmbeddingInput,
+  normalized: EntityEmbedding
+): {
+  embeddingType: 'vector-array' | 'entity-embedding' | 'embedding-object';
+  vectorLength: number;
+  model: string;
+} => ({
+  embeddingType: Array.isArray(input)
+    ? 'vector-array'
+    : isEntityEmbedding(input)
+      ? 'entity-embedding'
+      : 'embedding-object',
+  vectorLength: normalized.vector.length,
+  model: normalized.model,
+});
+
+const hasVectorStoreOptions = (
+  provider: StorageProvider
+): provider is StorageProvider & { vectorStoreOptions?: VectorStoreFactoryOptions } =>
+  'vectorStoreOptions' in provider;
 
 const EMBEDDING_PROCESS_INTERVAL = 10000;
 const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
@@ -115,12 +183,8 @@ try {
     storageType: 'neo4j',
   });
 
-  // For Neo4j (which is always the storage provider)
-  // Access the connection manager from the Neo4j storage provider for entity data
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const entityConnectionManager = (storageProvider as any).connectionManager;
-
-  if (!entityConnectionManager) {
+  // Guard the provider before requesting a Neo4j connection manager so the compiler knows it implements ConnectionCapableProvider.
+  if (!hasConnectionManager(storageProvider)) {
     throw new Error('Neo4j storage provider does not have a connection manager');
   }
 
@@ -141,28 +205,19 @@ try {
       const result = await storageProvider.openNodes([name]);
       return result.entities[0] || null;
     },
-    // Make sure storeEntityVector is available
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    storeEntityVector: async (name: string, embedding: any) => {
-      logger.debug(`Neo4j adapter: storeEntityVector called for ${name}`, {
-        embeddingType: typeof embedding,
-        vectorLength: embedding?.vector?.length || 'no vector',
-        model: embedding?.model || 'no model',
-      });
+    // Provide a shim that uses the embedding capability guard instead of direct casts.
+    storeEntityVector: async (name: string, embedding: EmbeddingInput) => {
+      const formattedEmbedding = normalizeEmbeddingInput(embedding);
+      logger.debug(
+        `Neo4j adapter: storeEntityVector called for ${name}`,
+        describeEmbeddingInput(embedding, formattedEmbedding)
+      );
 
-      // Ensure embedding has the correct format
-      const formattedEmbedding = {
-        vector: embedding.vector || embedding,
-        model: embedding.model || 'unknown',
-        lastUpdated: embedding.lastUpdated || Date.now(),
-      };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (typeof (storageProvider as any).updateEntityEmbedding === 'function') {
+      // Type guard keeps `updateEntityEmbedding` calls safe and documented.
+      if (hasEmbeddingCapability(storageProvider)) {
         try {
           logger.debug(`Neo4j adapter: Using updateEntityEmbedding for ${name}`);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return await (storageProvider as any).updateEntityEmbedding(name, formattedEmbedding);
+          return await storageProvider.updateEntityEmbedding(name, formattedEmbedding);
         } catch (error) {
           logger.error(`Neo4j adapter: Error in storeEntityVector for ${name}`, error);
           throw error;
@@ -235,51 +290,39 @@ try {
 }
 
 // Create the KnowledgeGraphManager with the storage provider, embedding job manager, and vector store options
+const storageProviderVectorStoreOptions =
+  storageProvider && hasVectorStoreOptions(storageProvider)
+    ? storageProvider.vectorStoreOptions
+    : undefined;
+
 const knowledgeGraphManager = new KnowledgeGraphManager({
   storageProvider,
   embeddingJobManager,
-  // Pass vector store options from storage provider if available
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  vectorStoreOptions: (storageProvider as any).vectorStoreOptions,
+  vectorStoreOptions: storageProviderVectorStoreOptions,
 });
 
-// Ensure the storeEntityVector method is available on KnowledgeGraphManager's storageProvider
-// Cast to any to bypass type checking for internal properties
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const knowledgeGraphManagerAny = knowledgeGraphManager as any;
+type KnowledgeGraphStorageProviderWithAdapter = StorageProvider & {
+  storeEntityVector?: (name: string, embedding: EmbeddingInput) => Promise<void>;
+};
 
-if (
-  knowledgeGraphManagerAny.storageProvider &&
-  typeof knowledgeGraphManagerAny.storageProvider.storeEntityVector !== 'function'
-) {
-  // Add the storeEntityVector method to the storage provider
-  knowledgeGraphManagerAny.storageProvider.storeEntityVector = async (
-    name: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    embedding: any
-  ) => {
-    logger.debug(`Neo4j knowledgeGraphManager adapter: storeEntityVector called for ${name}`, {
-      embeddingType: typeof embedding,
-      vectorLength: embedding?.vector?.length || 'no vector',
-      model: embedding?.model || 'no model',
-    });
+const storageAdapterProvider = knowledgeGraphManager.getStorageProvider() as
+  | KnowledgeGraphStorageProviderWithAdapter
+  | undefined;
 
-    // Ensure embedding has the correct format
-    const formattedEmbedding = {
-      vector: embedding.vector || embedding,
-      model: embedding.model || 'unknown',
-      lastUpdated: embedding.lastUpdated || Date.now(),
-    };
+if (storageAdapterProvider && typeof storageAdapterProvider.storeEntityVector !== 'function') {
+  storageAdapterProvider.storeEntityVector = async (name, embedding: EmbeddingInput) => {
+    const normalizedEmbedding = normalizeEmbeddingInput(embedding);
+    logger.debug(
+      `Neo4j knowledgeGraphManager adapter: storeEntityVector called for ${name}`,
+      describeEmbeddingInput(embedding, normalizedEmbedding)
+    );
 
-    if (typeof knowledgeGraphManagerAny.storageProvider.updateEntityEmbedding === 'function') {
+    if (hasEmbeddingCapability(storageAdapterProvider)) {
       try {
         logger.debug(
           `Neo4j knowledgeGraphManager adapter: Using updateEntityEmbedding for ${name}`
         );
-        return await knowledgeGraphManagerAny.storageProvider.updateEntityEmbedding(
-          name,
-          formattedEmbedding
-        );
+        return await storageAdapterProvider.updateEntityEmbedding(name, normalizedEmbedding);
       } catch (error) {
         logger.error(
           `Neo4j knowledgeGraphManager adapter: Error in storeEntityVector for ${name}`,
@@ -287,11 +330,11 @@ if (
         );
         throw error;
       }
-    } else {
-      const errorMsg = `Neo4j knowledgeGraphManager adapter: updateEntityEmbedding not implemented for ${name}`;
-      logger.error(errorMsg);
-      throw new Error(errorMsg);
     }
+
+    const errorMsg = `Neo4j knowledgeGraphManager adapter: updateEntityEmbedding not implemented for ${name}`;
+    logger.error(errorMsg);
+    throw new Error(errorMsg);
   };
 
   logger.info(

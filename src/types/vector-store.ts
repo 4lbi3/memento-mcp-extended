@@ -1,15 +1,17 @@
 export interface VectorSearchResult {
   id: string | number;
   similarity: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export interface VectorStore {
   initialize(): Promise<void>;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  addVector(id: string | number, vector: number[], metadata?: Record<string, any>): Promise<void>;
+  addVector(
+    id: string | number,
+    vector: number[],
+    metadata?: Record<string, unknown>
+  ): Promise<void>;
 
   removeVector(id: string | number): Promise<void>;
 
@@ -17,10 +19,11 @@ export interface VectorStore {
     queryVector: number[],
     options?: {
       limit?: number;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      filter?: Record<string, any>;
+      filter?: Record<string, unknown>;
       hybridSearch?: boolean;
       minSimilarity?: number;
     }
   ): Promise<VectorSearchResult[]>;
+
+  diagnosticGetEntityEmbeddings?: () => Promise<Record<string, unknown>>;
 }

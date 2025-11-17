@@ -116,6 +116,11 @@ const nullLogger: Logger = {
  */
 export class Neo4jEmbeddingJobManager {
   private storageProvider: EmbeddingStorageProvider;
+  /**
+   * Underlying embedding service instance.
+   * Accessing this field directly is deprecated; prefer the public getters (`getEmbeddingService`/`getModelInfo`).
+   * @deprecated Use `getEmbeddingService()` or `getModelInfo()` instead of touching this field.
+   */
   private embeddingService: EmbeddingService;
   private jobStore: Neo4jJobStore;
   public rateLimiter: {
@@ -247,6 +252,26 @@ export class Neo4jEmbeddingJobManager {
       heartbeatInterval: this.heartbeatInterval,
       staleJobRecoveryInterval: this.staleJobRecoveryInterval,
     });
+  }
+
+  /**
+   * Get the embedding service powering this manager.
+   * @public
+   */
+  public getEmbeddingService(): EmbeddingService {
+    return this.embeddingService;
+  }
+
+  /**
+   * Get lightweight metadata about the embedding model.
+   * @public
+   */
+  public getModelInfo(): { name: string; dimensions: number } {
+    const info = this.embeddingService.getModelInfo();
+    return {
+      name: info.name,
+      dimensions: info.dimensions,
+    };
   }
 
   /**
