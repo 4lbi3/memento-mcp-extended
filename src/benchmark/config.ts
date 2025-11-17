@@ -94,9 +94,7 @@ function validateConfig(config: BenchmarkConfig): void {
   }
 
   if (errors.length > 0) {
-    throw new Error(
-      'Invalid configuration:\n' + errors.map((e) => `  - ${e}`).join('\n')
-    );
+    throw new Error('Invalid configuration:\n' + errors.map((e) => `  - ${e}`).join('\n'));
   }
 }
 

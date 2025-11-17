@@ -85,8 +85,7 @@ export class Neo4jVectorStore implements VectorStore {
   async addVector(
     id: string | number,
     vector: number[],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): Promise<void> {
     this.ensureInitialized();
 
@@ -184,8 +183,7 @@ export class Neo4jVectorStore implements VectorStore {
     queryVector: number[],
     options: {
       limit?: number;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      filter?: Record<string, any>;
+      filter?: Record<string, unknown>;
       hybridSearch?: boolean;
       minSimilarity?: number;
     } = {}
@@ -383,13 +381,17 @@ export class Neo4jVectorStore implements VectorStore {
    */
   async diagnosticGetEntityEmbeddings(): Promise<{
     count: number;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    samples: any[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    indexInfo: any;
+    samples: Array<{
+      name: string | null;
+      entityType: string | null;
+      embeddingSize: number;
+    }>;
+    indexInfo: {
+      name: string | null;
+      state: string | null;
+    };
     embeddingType: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vectorQueryTest: any;
+    vectorQueryTest: Record<string, unknown> | null;
   }> {
     try {
       const session = await this.connectionManager.getSession();
@@ -413,9 +415,9 @@ export class Neo4jVectorStore implements VectorStore {
         `;
         const sampleResult = await session.run(sampleQuery);
         const samples = sampleResult.records.map((record) => ({
-          name: record.get('e.name'),
-          entityType: record.get('e.entityType'),
-          embeddingSize: record.get('embeddingSize'),
+          name: (record.get('e.name') as string) ?? null,
+          entityType: (record.get('e.entityType') as string) ?? null,
+          embeddingSize: record.get('embeddingSize') as number,
         }));
 
         // Get vector index info
@@ -451,7 +453,7 @@ export class Neo4jVectorStore implements VectorStore {
         }
 
         // Try direct vector similarity query
-        let directVectorQueryResult = null;
+        let directVectorQueryResult: Record<string, unknown> | null = null;
         try {
           // Create a test vector with small random values instead of zeros
           // This ensures a positive l2-norm as required by Neo4j
@@ -473,8 +475,8 @@ export class Neo4jVectorStore implements VectorStore {
             sampleResult:
               testResult.records.length > 0
                 ? {
-                    name: testResult.records[0].get('node.name'),
-                    score: testResult.records[0].get('score'),
+                    name: (testResult.records[0].get('node.name') as string) ?? null,
+                    score: testResult.records[0].get('score') as number,
                   }
                 : null,
           };

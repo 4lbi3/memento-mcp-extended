@@ -35,8 +35,22 @@ describe('Diagnostic Tool Handlers', () => {
             name: 'test-embedding-model',
             dimensions: 1536,
           }),
+          getProviderInfo: vi.fn().mockReturnValue({
+            provider: 'test-provider',
+            model: 'test-embedding-model',
+            dimensions: 1536,
+          }),
         },
-        getPendingJobs: vi.fn().mockReturnValue([]),
+        getEmbeddingService() {
+          return this.embeddingService;
+        },
+        getQueueStatus: vi.fn().mockResolvedValue({
+          pending: 0,
+          processing: 0,
+          completed: 0,
+          failed: 0,
+          totalJobs: 0,
+        }),
         scheduleEntityEmbedding: vi.fn().mockResolvedValue('test-embedding-job'),
       },
       storageProvider: {
@@ -80,6 +94,11 @@ describe('Diagnostic Tool Handlers', () => {
       },
       search: vi.fn(),
     };
+
+    mockKnowledgeGraphManager.getStorageProvider = () =>
+      mockKnowledgeGraphManager.storageProvider;
+    mockKnowledgeGraphManager.getEmbeddingJobManager = () =>
+      mockKnowledgeGraphManager.embeddingJobManager;
   });
 
   describe('force_generate_embedding tool', () => {

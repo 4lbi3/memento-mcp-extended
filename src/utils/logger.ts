@@ -2,38 +2,46 @@
  * Simple logger utility that wraps console methods
  * Avoids direct console usage which can interfere with MCP stdio
  */
+const safeStringify = (value: unknown): string => {
+  if (value instanceof Error) {
+    return value.stack ?? value.message ?? String(value);
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
+
+const writeArgs = (prefix: string, args: unknown[]): void => {
+  if (args.length === 0) {
+    return;
+  }
+
+  process.stderr.write(`${prefix}${safeStringify(args)}\n`);
+};
+
 export const logger = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  info: (message: string, ...args: any[]) => {
+  info(message: string, ...args: unknown[]): void {
     process.stderr.write(`[INFO] ${message}\n`);
-    if (args.length > 0) {
-      process.stderr.write(`${JSON.stringify(args, null, 2)}\n`);
-    }
+    writeArgs('[INFO] extra: ', args);
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  error: (message: string, error?: any) => {
+  error(message: string, error?: unknown): void {
     process.stderr.write(`[ERROR] ${message}\n`);
-    if (error) {
-      process.stderr.write(
-        `${error instanceof Error ? error.stack : JSON.stringify(error, null, 2)}\n`
-      );
+    if (error !== undefined) {
+      process.stderr.write(`${safeStringify(error)}\n`);
     }
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  debug: (message: string, ...args: any[]) => {
+  debug(message: string, ...args: unknown[]): void {
     process.stderr.write(`[DEBUG] ${message}\n`);
-    if (args.length > 0) {
-      process.stderr.write(`${JSON.stringify(args, null, 2)}\n`);
-    }
+    writeArgs('[DEBUG] extra: ', args);
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  warn: (message: string, ...args: any[]) => {
+  warn(message: string, ...args: unknown[]): void {
     process.stderr.write(`[WARN] ${message}\n`);
-    if (args.length > 0) {
-      process.stderr.write(`${JSON.stringify(args, null, 2)}\n`);
-    }
+    writeArgs('[WARN] extra: ', args);
   },
 };
