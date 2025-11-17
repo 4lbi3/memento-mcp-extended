@@ -10,6 +10,7 @@ import {
   type VectorStoreFactoryOptions,
 } from './storage/VectorStoreFactory.js';
 import { logger } from './utils/logger.js';
+import { hasEmbeddingCapability, hasTemporalCapability } from './storage/capabilities.js';
 
 // Extended storage provider interfaces for optional methods
 interface StorageProviderWithSearchVectors extends StorageProvider {
@@ -55,12 +56,13 @@ function hasUpdateRelation(provider: StorageProvider): boolean {
 }
 
 // We are storing our memory using entities, relations, and observations in a graph structure
-export interface Entity {
+export interface Entity<TMetadata extends Record<string, unknown> = Record<string, never>> {
   name: string;
   entityType: string;
   observations: string[];
   embedding?: EntityEmbedding;
   version?: number;
+  metadata?: TMetadata;
 }
 
 // Re-export the Relation interface for backward compatibility
@@ -68,9 +70,12 @@ export { Relation } from './types/relation.js';
 export type { SemanticSearchOptions } from './types/entity-embedding.js';
 
 // Export the KnowledgeGraph shape
-export interface KnowledgeGraph {
-  entities: Entity[];
-  relations: Relation[];
+export interface KnowledgeGraph<
+  TEntity extends Entity = Entity,
+  TRelation extends Relation = Relation,
+> {
+  entities: TEntity[];
+  relations: TRelation[];
   total?: number;
   timeTaken?: number;
   diagnostics?: Record<string, unknown>;
@@ -258,6 +263,20 @@ export class KnowledgeGraphManager {
   }
 
   /**
+   * Expose the configured storage provider for tooling and diagnostics.
+   */
+  public getStorageProvider(): StorageProvider | undefined {
+    return this.storageProvider;
+  }
+
+  /**
+   * Expose the embedding job manager to allow scheduling from helpers.
+   */
+  public getEmbeddingJobManager(): Neo4jEmbeddingJobManager | undefined {
+    return this.embeddingJobManager;
+  }
+
+  /**
    * Update an entity's embedding in both the storage provider and vector store
    *
    * @param entityName - Name of the entity
@@ -279,7 +298,7 @@ export class KnowledgeGraphManager {
     }
 
     // Update the storage provider
-    if (this.storageProvider && typeof this.storageProvider.updateEntityEmbedding === 'function') {
+    if (this.storageProvider && hasEmbeddingCapability(this.storageProvider)) {
       await this.storageProvider.updateEntityEmbedding(entityName, embedding);
     }
 
@@ -826,7 +845,7 @@ export class KnowledgeGraphManager {
       throw new SemanticSearchFallbackError('embedding_job_manager_missing');
     }
 
-    const embeddingService = this.embeddingJobManager['embeddingService'];
+    const embeddingService = this.embeddingJobManager.getEmbeddingService();
     if (!embeddingService) {
       throw new SemanticSearchFallbackError('embedding_service_not_configured');
     }
@@ -972,7 +991,7 @@ export class KnowledgeGraphManager {
         if (!this.embeddingJobManager) {
           fallbackReason = 'embedding_job_manager_missing';
         } else {
-          const embeddingService = this.embeddingJobManager['embeddingService'];
+          const embeddingService = this.embeddingJobManager.getEmbeddingService();
           if (!embeddingService) {
             fallbackReason = 'embedding_service_not_configured';
           } else {
@@ -1275,7 +1294,7 @@ export class KnowledgeGraphManager {
    * @returns Graph with decayed confidences
    */
   async getDecayedGraph(): Promise<KnowledgeGraph & { decay_info?: Record<string, unknown> }> {
-    if (!this.storageProvider || typeof this.storageProvider.getDecayedGraph !== 'function') {
+    if (!this.storageProvider || !hasTemporalCapability(this.storageProvider)) {
       throw new Error('Storage provider does not support decay operations');
     }
 
@@ -1289,7 +1308,7 @@ export class KnowledgeGraphManager {
    * @returns Array of entity versions
    */
   async getEntityHistory(entityName: string): Promise<Entity[]> {
-    if (!this.storageProvider || typeof this.storageProvider.getEntityHistory !== 'function') {
+    if (!this.storageProvider || !hasTemporalCapability(this.storageProvider)) {
       throw new Error('Storage provider does not support entity history operations');
     }
 
@@ -1305,7 +1324,7 @@ export class KnowledgeGraphManager {
    * @returns Array of relation versions
    */
   async getRelationHistory(from: string, to: string, relationType: string): Promise<Relation[]> {
-    if (!this.storageProvider || typeof this.storageProvider.getRelationHistory !== 'function') {
+    if (!this.storageProvider || !hasTemporalCapability(this.storageProvider)) {
       throw new Error('Storage provider does not support relation history operations');
     }
 
@@ -1319,7 +1338,7 @@ export class KnowledgeGraphManager {
    * @returns The knowledge graph as it existed at the specified time
    */
   async getGraphAtTime(timestamp: number): Promise<KnowledgeGraph> {
-    if (!this.storageProvider || typeof this.storageProvider.getGraphAtTime !== 'function') {
+    if (!this.storageProvider || !hasTemporalCapability(this.storageProvider)) {
       throw new Error('Storage provider does not support temporal graph operations');
     }
 

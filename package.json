@@ -1,6 +1,6 @@
 {
   "name": "@4lbi3/memento-mcp-extended",
-  "version": "0.3.9.14",
+"version": "0.3.9-14",
   "description": "Memento MCP: Knowledge graph memory system for LLMs",
   "license": "MIT",
   "author": "4lbi3",
@@ -28,6 +28,7 @@
     "test:coverage": "vitest run --coverage",
     "test:verbose": "clear && vitest run --reporter verbose",
     "test:integration": "TEST_INTEGRATION=true npm test",
+    "test:type": "tsd",
     "error-scenarios": "tsx scripts/error-scenarios.ts",
     "benchmark": "tsx src/benchmark/index.ts",
     "lint": "eslint 'src/**/*.ts'",
@@ -45,7 +46,7 @@
     "neo4j-driver": "^5.28.1",
     "openai": "^4.90.0",
     "ts-node": "^10.9.2",
-    "uuid": "^11.1.0"
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/lru-cache": "^7.10.10",
@@ -61,6 +62,7 @@
     "prettier": "^3.5.3",
     "rimraf": "^6.0.1",
     "shx": "^0.4.0",
+    "tsd": "^0.33.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.32.0",
@@ -70,6 +72,9 @@
   "overrides": {
     "glob": "^11.0.1",
     "rimraf": "^6.0.1"
+  },
+  "tsd": {
+    "directory": "src/__type-tests__"
   },
   "engines": {
     "node": ">=20.0.0"

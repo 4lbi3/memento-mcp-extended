@@ -1,23 +1,23 @@
 import * as toolHandlers from './toolHandlers/index.js';
-import type { KnowledgeGraphManager, Relation, Entity } from '../../KnowledgeGraphManager.js';
-import type { Neo4jEmbeddingJobManager } from '../../embeddings/Neo4jEmbeddingJobManager.js';
+import type { KnowledgeGraphManager, Relation } from '../../KnowledgeGraphManager.js';
 import type { StorageProvider } from '../../storage/StorageProvider.js';
 import { gatherDebugEmbeddingConfig } from '../../diagnostics/debugEmbeddingConfig.js';
+import {
+  hasEmbeddingCapability,
+  hasTemporalCapability,
+  hasPurgeCapability,
+} from '../../storage/capabilities.js';
 import { formatKnowledgeGraphForDisplay } from './utils/graphFormatter.js';
 
-type KnowledgeGraphManagerInternals = {
-  embeddingJobManager?: Neo4jEmbeddingJobManager;
-  storageProvider?: StorageProvider;
-};
+function hasVectorSearchDiagnostics(
+  provider: StorageProvider | undefined
+): provider is StorageProvider & { diagnoseVectorSearch: () => Promise<Record<string, unknown>> } {
+  if (!provider) {
+    return false;
+  }
 
-function getEmbeddingJobManager(
-  manager: KnowledgeGraphManager
-): Neo4jEmbeddingJobManager | undefined {
-  return (manager as unknown as KnowledgeGraphManagerInternals).embeddingJobManager;
-}
-
-function getStorageProvider(manager: KnowledgeGraphManager): StorageProvider | undefined {
-  return (manager as unknown as KnowledgeGraphManagerInternals).storageProvider;
+  const candidate = provider as { diagnoseVectorSearch?: unknown };
+  return 'diagnoseVectorSearch' in provider && typeof candidate.diagnoseVectorSearch === 'function';
 }
 
 /**
@@ -51,6 +51,27 @@ export async function handleCallToolRequest(
   if (!args) {
     throw new Error(`No arguments provided for tool: ${name}`);
   }
+
+  const storageProvider = knowledgeGraphManager.getStorageProvider();
+  const hasTemporalSupport = storageProvider ? hasTemporalCapability(storageProvider) : false;
+  const buildTemporalErrorResponse = (
+    description: string
+  ): { content: Array<{ type: string; text: string }> } => ({
+    content: [
+      {
+        type: 'text',
+        text: `Storage provider does not support temporal ${description} operations`,
+      },
+    ],
+  });
+  const buildPurgeErrorResponse = (): { content: Array<{ type: string; text: string }> } => ({
+    content: [
+      {
+        type: 'text',
+        text: 'Storage provider does not support purge operations',
+      },
+    ],
+  });
 
   try {
     switch (name) {
@@ -126,6 +147,9 @@ export async function handleCallToolRequest(
         };
 
       case 'get_entity_history':
+        if (!hasTemporalSupport) {
+          return buildTemporalErrorResponse('entity history');
+        }
         try {
           const history = await knowledgeGraphManager.getEntityHistory(String(args.entityName));
           return { content: [{ type: 'text', text: JSON.stringify(history, null, 2) }] };
@@ -137,6 +161,9 @@ export async function handleCallToolRequest(
         }
 
       case 'get_relation_history':
+        if (!hasTemporalSupport) {
+          return buildTemporalErrorResponse('relation history');
+        }
         try {
           const history = await knowledgeGraphManager.getRelationHistory(
             String(args.from),
@@ -152,6 +179,9 @@ export async function handleCallToolRequest(
         }
 
       case 'get_graph_at_time':
+        if (!hasTemporalSupport) {
+          return buildTemporalErrorResponse('graph');
+        }
         try {
           const graph = await knowledgeGraphManager.getGraphAtTime(Number(args.timestamp));
           return { content: [{ type: 'text', text: JSON.stringify(graph, null, 2) }] };
@@ -163,6 +193,9 @@ export async function handleCallToolRequest(
         }
 
       case 'get_decayed_graph':
+        if (!hasTemporalSupport) {
+          return buildTemporalErrorResponse('decayed graph');
+        }
         try {
           // NOTE: getDecayedGraph currently does not accept parameters
           // The reference_time and decay_factor arguments are ignored for now
@@ -176,9 +209,85 @@ export async function handleCallToolRequest(
           };
         }
 
+      case 'purge_archived_entities': {
+        if (!storageProvider || !hasPurgeCapability(storageProvider)) {
+          return buildPurgeErrorResponse();
+        }
+
+        try {
+          const purgeProvider = storageProvider;
+          const cutoffTimestamp = Number(args.cutoffTimestamp ?? args.cutoff ?? args.timestamp);
+          if (!Number.isFinite(cutoffTimestamp)) {
+            throw new Error('Invalid cutoff timestamp for purge');
+          }
+
+          const purgedEntities = await purgeProvider.purgeArchivedEntities(cutoffTimestamp);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  purgedEntities,
+                  cutoffTimestamp,
+                }),
+              },
+            ],
+          };
+        } catch (error: Error | unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error purging archived entities: ${errorMessage}`,
+              },
+            ],
+          };
+        }
+      }
+
+      case 'purge_archived_relations': {
+        if (!storageProvider || !hasPurgeCapability(storageProvider)) {
+          return buildPurgeErrorResponse();
+        }
+
+        try {
+          const purgeProvider = storageProvider;
+          const cutoffTimestamp = Number(args.cutoffTimestamp ?? args.cutoff ?? args.timestamp);
+          if (!Number.isFinite(cutoffTimestamp)) {
+            throw new Error('Invalid cutoff timestamp for purge');
+          }
+
+          const purgedRelations = await purgeProvider.purgeArchivedRelations(cutoffTimestamp);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  purgedRelations,
+                  cutoffTimestamp,
+                }),
+              },
+            ],
+          };
+        } catch (error: Error | unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error purging archived relations: ${errorMessage}`,
+              },
+            ],
+          };
+        }
+      }
+
       case 'force_generate_embedding': {
         try {
-          const embeddingJobManager = getEmbeddingJobManager(knowledgeGraphManager);
+          const embeddingJobManager = knowledgeGraphManager.getEmbeddingJobManager();
 
           if (!embeddingJobManager) {
             process.stderr.write(`[ERROR] EmbeddingJobManager not initialized\n`);
@@ -205,7 +314,6 @@ export async function handleCallToolRequest(
           if (hasEntityName) {
             process.stderr.write(`[DEBUG] Mode 1: forcing embedding for entity ${entityNameArg}\n`);
 
-            const storageProvider = getStorageProvider(knowledgeGraphManager);
             if (!storageProvider || typeof storageProvider.getEntity !== 'function') {
               throw new Error(
                 'Storage provider must implement getEntity() for specific force mode'
@@ -246,25 +354,14 @@ export async function handleCallToolRequest(
             `[DEBUG] Mode 2: batch repair, discovering up to ${batchLimit} entities without embeddings\n`
           );
 
-          const storageProvider = getStorageProvider(knowledgeGraphManager);
-          if (
-            !storageProvider ||
-            typeof (
-              storageProvider as {
-                getEntitiesWithoutEmbeddings?: (limit: number) => Promise<Entity[]>;
-              }
-            ).getEntitiesWithoutEmbeddings !== 'function'
-          ) {
+          if (!storageProvider || !hasEmbeddingCapability(storageProvider)) {
             throw new Error(
               'Storage provider does not support discovering entities without embeddings'
             );
           }
 
-          const entitiesWithoutEmbeddings = await (
-            storageProvider as {
-              getEntitiesWithoutEmbeddings: (limit: number) => Promise<Entity[]>;
-            }
-          ).getEntitiesWithoutEmbeddings(batchLimit);
+          const entitiesWithoutEmbeddings =
+            await storageProvider.getEntitiesWithoutEmbeddings(batchLimit);
 
           if (!entitiesWithoutEmbeddings || entitiesWithoutEmbeddings.length === 0) {
             process.stderr.write(`[DEBUG] No entities found without embeddings\n`);
@@ -385,29 +482,14 @@ export async function handleCallToolRequest(
 
       case 'get_entity_embedding':
         try {
-          // NOTE: This diagnostic tool accesses private KnowledgeGraphManager internals
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const kgmAny = knowledgeGraphManager as any;
-
           // Check if entity exists
           const entity = await knowledgeGraphManager.openNodes([String(args.entity_name)]);
           if (!entity.entities || entity.entities.length === 0) {
             return { content: [{ type: 'text', text: `Entity not found: ${args.entity_name}` }] };
           }
 
-          // Access the embedding using appropriate interface
-          if (
-            kgmAny.storageProvider &&
-            typeof kgmAny.storageProvider.getEntityEmbedding === 'function'
-          ) {
-            type EntityEmbedding = {
-              vector: number[];
-              model?: string;
-              lastUpdated?: number;
-            };
-
-            const embedding: EntityEmbedding | null =
-              await kgmAny.storageProvider.getEntityEmbedding(String(args.entity_name));
+          if (storageProvider && hasEmbeddingCapability(storageProvider)) {
+            const embedding = await storageProvider.getEntityEmbedding(String(args.entity_name));
 
             if (!embedding) {
               return {
@@ -435,16 +517,16 @@ export async function handleCallToolRequest(
                 },
               ],
             };
-          } else {
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Embedding retrieval not supported by this storage provider`,
-                },
-              ],
-            };
           }
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Storage provider does not support embedding operations`,
+              },
+            ],
+          };
         } catch (error: Error | unknown) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
@@ -485,41 +567,32 @@ export async function handleCallToolRequest(
         }
 
       case 'diagnose_vector_search':
-        // NOTE: This diagnostic tool accesses private KnowledgeGraphManager internals
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const kgmAnyDiagnose = knowledgeGraphManager as any;
-
-        if (
-          kgmAnyDiagnose.storageProvider &&
-          typeof kgmAnyDiagnose.storageProvider.diagnoseVectorSearch === 'function'
-        ) {
+        if (hasVectorSearchDiagnostics(storageProvider)) {
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify(await kgmAnyDiagnose.storageProvider.diagnoseVectorSearch()),
-              },
-            ],
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  {
-                    error: 'Diagnostic method not available',
-                    storageType: kgmAnyDiagnose.storageProvider
-                      ? kgmAnyDiagnose.storageProvider.constructor.name
-                      : 'unknown',
-                  },
-                  null,
-                  2
-                ),
+                text: JSON.stringify(await storageProvider.diagnoseVectorSearch()),
               },
             ],
           };
         }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  error: 'Diagnostic method not available',
+                  storageType: storageProvider ? storageProvider.constructor.name : 'unknown',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
 
       default:
         throw new Error(`Unknown tool: ${name}`);
